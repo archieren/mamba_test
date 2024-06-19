@@ -21,9 +21,9 @@ from knn_cuda import KNN
 
 """
 用Mamba来处理点云,有下面的几项工作:
-PointMamba:这哥们有点灌水,到第四版,又惨考了PTV3的结构化思路.
-Mamba3D:
-Point Cloud Mamba:
+PointMamba:这哥们有点灌水,到第四版,又参考了PTV3的结构化思路.
+Mamba3D: 说他的Local Norm Pooling(LNP)是相较PointMamba优点!
+Point Cloud Mamba:从 PointMLP出发的Mamba
 另外Point Transformer V3的工作值得注意!尺度规模和结构化,是他想解决的问题!
 """
 
