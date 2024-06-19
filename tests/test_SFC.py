@@ -73,6 +73,8 @@ def test_PointCloud():
   time_it(start_time)
   print("keys:")
   print(pc.keys())
+  print("About Batch:shape")
+  print(pc.batch.shape)
   print("About Batch:bincount")
   print(pc.batch.bincount())
   print("serialized_code")
@@ -85,15 +87,15 @@ def test_PointCloud():
   print(pc.serialized_order[0, 100:102])
   print(pc.serialized_inverse[0, pc.serialized_order[0, 100:102]])
   print("Sparsity")
+  print("About Sparsity:sparse_shape")
   print(pc.sparse_shape)
-  print(pc.sparse_conv_feat)
-  print("sparse features: spatial shape")
+  print("About sparse_conv_feat: spatial shape")
   print(pc.sparse_conv_feat.spatial_shape)
-  print("sparse features: features")
+  print("About sparse_conv_feat: features's shape")
   print(pc.sparse_conv_feat.features.shape)
-  print("sparse features: indices")
+  print("About sparse_conv_feat: indices's shape")
   print(pc.sparse_conv_feat.indices.shape)
-  print("sparse features: batch size")
+  print("About sparse_conv_feat: batch size")
   print(pc.sparse_conv_feat.batch_size)
 
 def test_fps_pyg():
@@ -191,11 +193,37 @@ def test_point_transformer():
           loss.backward()
     input()
 
+def test_point_sis():
+    import torch.autograd.profiler as profiler
+
+    from pathlib import Path
+    from torch.utils.cpp_extension import CUDA_HOME
+    from cumm.nvrtc import get_cudadevrt_path
+    from cumm.common import _get_cuda_include_lib
+
+    # cumm.common 的 231-232做了修改的!!!
+    # 原代码里的cuda路径有问题!
+    print(get_cudadevrt_path())
+    print(_get_cuda_include_lib())    
+    from pm.pointmamba import PointSIS
+    model =PointSIS(3).to(device)
+    dc = make_data_dict()
+    pc = model(dc)
+    print(pc.keys())
+
+    # with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
+    #   with profiler.record_function("model_forward"):
+    #       output = model(dc)
+    #       loss = output.sum()
+    #   with profiler.record_function("model_backward"):
+    #       loss.backward()
+    input()
+
 # test_PointCloud()
 # test_fps_pyg()
 # test_fps_pointnet2()
 # test_pointmlp()
-test_curvenet()
+# test_curvenet()
 
 # test_point_transformer()
-
+test_point_sis()
