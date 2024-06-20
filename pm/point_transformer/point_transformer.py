@@ -96,14 +96,7 @@ class SerializedAttention(PointModule):
         ):
             offset = point.offset
             bincount = offset2bincount(offset)
-            bincount_pad = (
-                torch.div(
-                    bincount + self.patch_size - 1,
-                    self.patch_size,
-                    rounding_mode="trunc",
-                )
-                * self.patch_size
-            )
+            bincount_pad = (torch.div(bincount + self.patch_size - 1,self.patch_size,rounding_mode="trunc",)* self.patch_size)
             # only pad point when num of points larger than patch_size
             mask_pad = bincount > self.patch_size
             bincount_pad = ~mask_pad * bincount + mask_pad * bincount_pad

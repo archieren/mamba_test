@@ -1,8 +1,8 @@
 import torch.nn as nn
 
-from pm.pointmamba.modules import PointModule
+from pm.pointmamba.modules import PointCloudModule
 
-class PDNorm(PointModule):
+class PDNorm(PointCloudModule):
     def __init__(
         self,
         num_features,
@@ -22,7 +22,8 @@ class PDNorm(PointModule):
             self.norm = norm_layer
         if self.adaptive:
             self.modulation = nn.Sequential(
-                nn.SiLU(), nn.Linear(context_channels, 2 * num_features, bias=True)
+                nn.SiLU(), 
+                nn.Linear(context_channels, 2 * num_features, bias=True)
             )
 
     def forward(self, point):

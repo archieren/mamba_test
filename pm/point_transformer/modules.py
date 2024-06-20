@@ -17,6 +17,7 @@ class PointSequential(PointModule):
     r"""A sequential container.
     Modules will be added to it in the order they are passed in the constructor.
     Alternatively, an ordered dict of modules can also be passed in.
+    主要使得Forward参数具有合理的解释!!!
     """
 
     def __init__(self, *args, **kwargs):
@@ -57,23 +58,21 @@ class PointSequential(PointModule):
     def forward(self, input):
         for k, module in self._modules.items():
             # Point module
-            if isinstance(module, PointModule):
+            if isinstance(module, PointModule): #对于PointModule之流, input由它自行解释!
                 input = module(input)
             # Spconv module
-            elif spconv.modules.is_spconv_module(module):
+            elif spconv.modules.is_spconv_module(module): #对于非PointModule之流中,由spconv定义的模块, 它的forword参数应是spconv.SparseConvTensor类型!
                 if isinstance(input, PointCloud):
                     input.sparse_conv_feat = module(input.sparse_conv_feat)
                     input.feat = input.sparse_conv_feat.features
                 else:
                     input = module(input)
             # PyTorch module
-            else:
+            else: # 这会是谁? 想干什么?
                 if isinstance(input, PointCloud):
                     input.feat = module(input.feat)
                     if "sparse_conv_feat" in input.keys():
-                        input.sparse_conv_feat = input.sparse_conv_feat.replace_feature(
-                            input.feat
-                        )
+                        input.sparse_conv_feat = input.sparse_conv_feat.replace_feature(input.feat)
                 elif isinstance(input, spconv.SparseConvTensor):
                     if input.indices.shape[0] != 0:
                         input = input.replace_feature(module(input.features))

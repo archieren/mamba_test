@@ -5,18 +5,19 @@ from collections import OrderedDict
 from pm.utils.point_cloud import PointCloud
 
 
-class PointModule(nn.Module):
-    r"""PointModule placeholder, all module subclass from this will take Point in PointSequential.
+class PointCloudModule(nn.Module):
+    r"""
+    此模块的子类都从PointSparseSequential中取参数!.
     """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
 
-class PointSequential(PointModule):
-    r"""A sequential container.
-    Modules will be added to it in the order they are passed in the constructor.
-    Alternatively, an ordered dict of modules can also be passed in.
+class PointSparseSequential(PointCloudModule):
+    r"""
+    A sequential container.
+    (类似mmcv中的SparseSequential.)
     """
 
     def __init__(self, *args, **kwargs):
@@ -57,7 +58,7 @@ class PointSequential(PointModule):
     def forward(self, input):
         for k, module in self._modules.items():
             # Point module
-            if isinstance(module, PointModule):
+            if isinstance(module, PointCloudModule):
                 input = module(input)
             # Spconv module
             elif spconv.modules.is_spconv_module(module):

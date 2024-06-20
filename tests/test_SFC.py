@@ -1,5 +1,6 @@
 import os,sys
 sys.path.append(os.getcwd()) # 先这样!!!
+os.environ["TORCH_CUDA_ARCH_LIST"] = "6.0;6.1;6.2"
 import time
 from addict import Dict
 import numpy as np
@@ -187,8 +188,9 @@ def test_point_transformer():
 
     with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
       with profiler.record_function("model_forward"):
+          print("hello")
           output = model(dc)
-          loss = output.sum()
+          loss = output.sparse_conv_feat.features.sum()
       with profiler.record_function("model_backward"):
           loss.backward()
     input()
@@ -225,5 +227,5 @@ def test_point_sis():
 # test_pointmlp()
 # test_curvenet()
 
-# test_point_transformer()
-test_point_sis()
+test_point_transformer()
+#test_point_sis()
