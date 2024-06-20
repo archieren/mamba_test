@@ -580,3 +580,4 @@ def test_spglobalmaxpool3d():
 
 # if __name__ == "__main__":
 test_spglobalmaxpool3d()
+test_spconv3d()
