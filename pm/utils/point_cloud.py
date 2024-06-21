@@ -1,11 +1,13 @@
 from addict import Dict
 import torch
 import torch.nn as nn
-from torch_geometric.nn import fps
-from torch_geometric.nn import knn
 
+from pointops import knn_query as knn
+from pointops import farthest_point_sampling as fps
+
+# from torch_geometric.nn import fps, knn
 from pm.sfc_serialization import encode
-from pm.utils.misc import offset2batch,batch2offset
+from pm.utils.misc import offset2batch,batch2offset,offset2bincount
 
 import spconv.pytorch as spconv
 
@@ -39,6 +41,7 @@ class PointCloud(Dict):
         # If one of "offset" or "batch" do not exist, generate by the existing one
         if "batch" not in self.keys() and "offset" in self.keys():
             self.batch = offset2batch(self.offset)
+            self.batch_bin = offset2bincount(self.offset)
         elif "offset" not in self.keys() and "batch" in self.keys():
             self.offset = batch2offset(self.batch)
 
@@ -143,37 +146,34 @@ class PointCloud(Dict):
         )
         self["sparse_shape"] = sparse_shape
         self["sparse_conv_feat"] = sparse_conv_feat
+    
+@torch.inference_mode()
+def group(xyz_pc:PointCloud, num_group:int, group_size:int):
+    '''
+        input: 
+        xyz_pc.coord  shape 为 (N1+N2+.....+Nb) x 3.
+        xyx_pc.batch  应当形如[N1s 0, N2s 1,..., Nbs (b-1)]
+        xyz_pc.batch_bin 应为[N1, N2,..., Nb]
+        ---------------------------
+    '''
+    # pyg方式: 按比例
+    # c_idx = fps(xyz_pc.coord, xyz_pc.batch, ratio=0.03)
+    # c  = xyz_pc.coord[c_idx]
+    # c_batch = xyz_pc.batch[c_idx]
+    # patch_idx = knn(xyz_pc.coord, c, self.group_size,xyz_pc.batch, c_batch)
+    
+    # pointops方式 :按量,返回结果还包括距离
+    new_offset = (torch.ones_like( xyz_pc.batch_bin)* num_group).cumsum(0).int()
+    samples_idx = fps(xyz_pc.coord, xyz_pc.offset, new_offset)
+    new_xyz  = xyz_pc.coord[samples_idx]
+    idx, dist = knn(group_size, xyz_pc.coord, xyz_pc.offset, new_xyz,new_offset)
 
-class Group(nn.Module):  # FPS + KNN
-    def __init__(self, num_group, group_size):
-        super().__init__()
-        self.num_group = num_group
-        self.group_size = group_size
-        #self.knn = knn(k=self.group_size, transpose_mode=True)
-
-    def forward(self, xyz_pc:PointCloud):
-        '''
-            input: 
-            xyz_pc.coord  shape 为 (N1+N2+.....+Nb) x 3.
-            xyx_pc.batch  应当形如[N1s 0, N2s 1,..., Nbs (b-1)]
-            ---------------------------
-        '''
-        #batch_size, num_points, _ = xyz_pc.shape
-        # fps the centers out
-        print(batch2offset(xyz_pc.batch))
-        c_idx = fps(xyz_pc.coord, xyz_pc.batch, ratio=0.03)
-        c  = xyz_pc.coord[c_idx]
-        c_batch = xyz_pc.batch[c_idx]
-        print(c_batch.shape)
-        print(batch2offset(c_batch))
-        patch_idx = knn(xyz_pc.coord, c, self.group_size,xyz_pc.batch, c_batch) 
-
-        # idx_base = torch.arange(0, batch_size, device=xyz_pc.device).view(-1, 1, 1) * num_points
-        # idx = idx + idx_base
-        # idx = idx.view(-1)
-        # neighborhood = xyz_pc.view(batch_size * num_points, -1)[idx, :]
-        # neighborhood = neighborhood.view(batch_size, self.num_group, self.group_size, 3).contiguous()
-        # # normalize
-        # neighborhood = neighborhood - center.unsqueeze(2)
-        # return neighborhood, center
-        return c_idx , patch_idx
+    # idx_base = torch.arange(0, batch_size, device=xyz_pc.device).view(-1, 1, 1) * num_points
+    # idx = idx + idx_base
+    # idx = idx.view(-1)
+    # neighborhood = xyz_pc.view(batch_size * num_points, -1)[idx, :]
+    # neighborhood = neighborhood.view(batch_size, self.num_group, self.group_size, 3).contiguous()
+    # # normalize
+    # neighborhood = neighborhood - center.unsqueeze(2)
+    # return neighborhood, center
+    return idx , dist    

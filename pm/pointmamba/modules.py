@@ -5,7 +5,7 @@ from collections import OrderedDict
 from pm.utils.point_cloud import PointCloud
 
 
-class PointCloudModule(nn.Module):
+class PCModule(nn.Module):
     r"""
     此模块的子类都从PointSparseSequential中取参数!.
     """
@@ -14,7 +14,7 @@ class PointCloudModule(nn.Module):
         super().__init__(*args, **kwargs)
 
 
-class PointSparseSequential(PointCloudModule):
+class PCSequential(PCModule):
     r"""
     A sequential container.
     (类似mmcv中的SparseSequential.)
@@ -58,7 +58,7 @@ class PointSparseSequential(PointCloudModule):
     def forward(self, input):
         for k, module in self._modules.items():
             # Point module
-            if isinstance(module, PointCloudModule):
+            if isinstance(module, PCModule):
                 input = module(input)
             # Spconv module
             elif spconv.modules.is_spconv_module(module):

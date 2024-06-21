@@ -9,8 +9,9 @@ import torch.nn as nn
 from torch import Tensor
 import spconv.pytorch as spconv
 
-# from torch_geometric.nn import fps
-# from torch_geometric.nn import knn
+from torch_geometric.nn import fps
+from torch_geometric.nn import knn
+from pm.utils.misc import offset2batch,batch2offset
 
 # from timm.models.layers import trunc_normal_
 # from timm.models.layers import DropPath
@@ -20,12 +21,15 @@ import spconv.pytorch as spconv
 
 # from knn_cuda import KNN
 
-from pm.pointmamba import PointCloud,PointCloudModule,PointSparseSequential
+from pm.pointmamba import PointCloud,PCModule,PCSequential
 """
 用Mamba来处理点云,目前看到的, 有下面的几项工作:
-PointMamba:这哥们(好像还是Baidu的!!!)有点灌水,到第四版,又参考了PTV3的结构化思路.
-Mamba3D: 说他的Local Norm Pooling(LNP)是相较PointMamba的优点!
-Point Cloud Mamba:从PointMLP出发的Mamba
+1) PointMamba:这哥们(好像还是Baidu的!!!)有点灌水,到第四版,又参考了PTV3的结构化思路.
+2) Point Cloud Mamba:从PointMLP出发的Mamba
+3) Mamba3D: 说他的Local Norm Pooling(LNP)是相较PointMamba的优点!
+
+另外一项工作 Voxel Mamba:
+
 
 另外Point Transformer V3的工作值得注意(尽管他是在Transformer上的工作.)!尺度和结构化,是他想解决的问题! 
 1)各种点云的尺度,跨度很大!
@@ -35,7 +39,7 @@ Point Cloud Mamba:从PointMLP出发的Mamba
 我这里的缩写,来之传说"Space Is a latent Sequence".
 """
 
-class Embedding(PointCloudModule):  # 留着,看看有没有用!
+class Embedding(PCModule):  # 留着,看看有没有用!
     def __init__(
         self,
         in_channels,
@@ -46,7 +50,7 @@ class Embedding(PointCloudModule):  # 留着,看看有没有用!
         self.embed_channels = embed_channels
 
         # TODO: check remove spconv
-        self.stem = PointSparseSequential(
+        self.stem = PCSequential(
             # conv=spconv.SubMConv3d(
             #     in_channels,
             #     embed_channels,
@@ -65,7 +69,7 @@ class Embedding(PointCloudModule):  # 留着,看看有没有用!
         return point
     
 
-class PointSIS(PointCloudModule):
+class PointSIS(PCModule):
     def __init__(
         self,
         in_channels=6,
@@ -90,7 +94,6 @@ class PointSIS(PointCloudModule):
         point = PointCloud(data_dict)
         point.serialization(order=self.order, shuffle_orders=self.shuffle_orders)
         point.sparsify()
-        point.condition="ScanNet"
 
         point = self.embedding(point)
         return point

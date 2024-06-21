@@ -10,7 +10,7 @@ import torch
 
 from pm.utils.misc import offset2batch,batch2offset
 from pm.sfc_serialization import encode
-from pm.utils.point_cloud import PointCloud, Group
+from pm.utils.point_cloud import PointCloud, group
 
 
 device='cuda'
@@ -21,6 +21,24 @@ def time_it(start_time):
     print("耗时: {:.2f}秒".format(stop_time - start_time))
     return
 
+def check_properties(name, mesh):
+    mesh.compute_vertex_normals()
+
+    edge_manifold = mesh.is_edge_manifold(allow_boundary_edges=True)
+    edge_manifold_boundary = mesh.is_edge_manifold(allow_boundary_edges=False)
+    vertex_manifold = mesh.is_vertex_manifold()
+    self_intersecting = mesh.is_self_intersecting()
+    watertight = mesh.is_watertight()
+    orientable = mesh.is_orientable()
+
+    print(name)
+    print(f"  edge_manifold:          {edge_manifold}")
+    print(f"  edge_manifold_boundary: {edge_manifold_boundary}")
+    print(f"  vertex_manifold:        {vertex_manifold}")
+    print(f"  self_intersecting:      {self_intersecting}")
+    print(f"  watertight:             {watertight}")
+    print(f"  orientable:             {orientable}")
+
 
 def read_mesh(file_path):
     mesh = o3d.io.read_triangle_mesh(file_path)
@@ -30,8 +48,8 @@ def read_mesh(file_path):
 
 def make_data_dict():
     # 熟悉一下数据的处理!!!
-    mesh_lower : o3d.geometry.TriangleMesh = read_mesh("./assets/124_lower.stl")
-    mesh_upper : o3d.geometry.TriangleMesh = read_mesh("./assets/124_upper.stl")
+    mesh_lower : o3d.t.geometry.TriangleMesh = read_mesh("./assets/124_lower.stl")
+    mesh_upper : o3d.t.geometry.TriangleMesh = read_mesh("./assets/124_upper.stl")
     # dtype=torch.float是必要的!!!
     points_lower = torch.asarray(np.asarray(mesh_lower.vertices),device=device, dtype=torch.float)
     normals_lower = torch.asarray(np.asarray(mesh_lower.vertex_normals), device=device, dtype=torch.float) 
@@ -66,9 +84,11 @@ def make_PointCloud():
     return pc
 
 def test_PointCloud():
+    start_time = time.time() 
     pc = make_PointCloud()
+    time_it(start_time)
 
-    start_time = time.time()  
+    start_time = time.time() 
     pc.serialization(depth=16,order={"z","z-trans","hilbert","hilbert-trans"})
     pc.sparsify()
     time_it(start_time)
@@ -104,14 +124,13 @@ def test_fps_pyg():
     from torch_geometric.nn import fps
     pc = make_PointCloud()
     start_time = time.time()
-    grouper = Group(2, 7)
-    c_idx, patch_index = grouper(pc)
+    idx, dist = group(pc,1024, 7) # (1024*)
     time_it(start_time)
-    print(c_idx[0])
-    print(pc.coord[c_idx[0]])
-    print(pc.batch[c_idx][0:10])
-    print(patch_index.shape)
-    print(patch_index[1,0:7])
+    print("Idx:")
+    print(pc.coord[idx[0]])
+    print(pc.batch[idx[:,0]][0:10])
+    # print(dist)
+    # print(dist[1,0:7])
     time_it(start_time)
     #print(pc.coord[patch_index[0,0:7]])
 
@@ -222,8 +241,8 @@ def test_point_sis():
           loss.backward()
     input()
 
-test_PointCloud()
-# test_fps_pyg()
+# test_PointCloud()
+test_fps_pyg()
 # test_fps_pointnet2()
 # test_pointmlp()
 # test_curvenet()
