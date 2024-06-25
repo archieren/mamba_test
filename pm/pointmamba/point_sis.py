@@ -4,13 +4,11 @@ import random
 from functools import partial
 
 import numpy as np
-# import torch
+import torch
 import torch.nn as nn
 from torch import Tensor
 import spconv.pytorch as spconv
 
-from torch_geometric.nn import fps
-from torch_geometric.nn import knn
 from pm.utils.misc import offset2batch,batch2offset
 
 # from timm.models.layers import trunc_normal_
@@ -21,7 +19,8 @@ from pm.utils.misc import offset2batch,batch2offset
 
 # from knn_cuda import KNN
 
-from pm.pointmamba import PointCloud,PCModule,PCSequential
+from pm.utils.point_cloud import PointCloud
+from pm.pointmamba import PCModule
 """
 用Mamba来处理点云,目前看到的, 有下面的几项工作:
 1) PointMamba:这哥们(好像还是Baidu的!!!)有点灌水,到第四版,又参考了PTV3的结构化思路.
@@ -39,35 +38,39 @@ from pm.pointmamba import PointCloud,PCModule,PCSequential
 我这里的缩写,来之传说"Space Is a latent Sequence".
 """
 
-class Embedding(PCModule):  # 留着,看看有没有用!
-    def __init__(
-        self,
-        in_channels,
-        embed_channels,
-    ):
+class Encoder(nn.Module):
+    def __init__(self, encoder_channel):
         super().__init__()
-        self.in_channels = in_channels
-        self.embed_channels = embed_channels
-
-        # TODO: check remove spconv
-        self.stem = PCSequential(
-            # conv=spconv.SubMConv3d(
-            #     in_channels,
-            #     embed_channels,
-            #     kernel_size=5,
-            #     padding=1,
-            #     bias=False,
-            #     indice_key="stem",
-            # ),
-            proj = nn.Linear(self.in_channels, self.embed_channels),
-            bn_layer = nn.BatchNorm1d(self.embed_channels), #ln_layer = nn.LayerNorm
-            act_layer = nn.GELU()
+        self.encoder_channel = encoder_channel
+        self.first_conv = nn.Sequential(
+            nn.Conv1d(3, 128, 1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(inplace=True),
+            nn.Conv1d(128, 256, 1)
+        )
+        self.second_conv = nn.Sequential(
+            nn.Conv1d(512, 512, 1),
+            nn.BatchNorm1d(512),
+            nn.ReLU(inplace=True),
+            nn.Conv1d(512, self.encoder_channel, 1)
         )
 
-    def forward(self, point: PointCloud):
-        point = self.stem(point)
-        return point
-    
+    def forward(self, point_groups):
+        '''
+            point_groups : B G N 3
+            -----------------
+            feature_global : B G C
+        '''
+        bs, g, n, _ = point_groups.shape
+        point_groups = point_groups.reshape(bs * g, n, 3)
+        # encoder
+        feature = self.first_conv(point_groups.transpose(2, 1))
+        feature_global = torch.max(feature, dim=2, keepdim=True)[0]
+        feature = torch.cat([feature_global.expand(-1, -1, n), feature], dim=1)
+        feature = self.second_conv(feature)
+        feature_global = torch.max(feature, dim=2, keepdim=False)[0]
+        return feature_global.reshape(bs, g, self.encoder_channel)
+
 
 class PointSIS(PCModule):
     def __init__(
@@ -85,17 +88,17 @@ class PointSIS(PCModule):
         self.order = [order] if isinstance(order, str) else order
         self.shuffle_orders = shuffle_orders
 
-        self.embedding = Embedding(
-            in_channels=in_channels,
-            embed_channels=enc_channels[0]
+        self.encoder = Encoder(encoder_channel=self.encoder_dims)
+        self.pos_embed = nn.Sequential(
+            nn.Linear(3, 128),
+            nn.GELU(),
+            nn.Linear(128, self.trans_dim)
         )
-
     def forward(self, data_dict):
         point = PointCloud(data_dict)
         point.serialization(order=self.order, shuffle_orders=self.shuffle_orders)
-        point.sparsify()
+        point.grouping()
 
-        point = self.embedding(point)
         return point
 
 

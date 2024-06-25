@@ -2,10 +2,6 @@ from addict import Dict
 import torch
 import torch.nn as nn
 
-from pointops import knn_query as knn
-from pointops import farthest_point_sampling as fps
-
-# from torch_geometric.nn import fps, knn
 from pm.sfc_serialization import encode
 from pm.utils.misc import offset2batch,batch2offset,offset2bincount
 
@@ -45,7 +41,7 @@ class PointCloud(Dict):
         elif "offset" not in self.keys() and "batch" in self.keys():
             self.offset = batch2offset(self.batch)
 
-    def serialization(self, order={"z"}, depth=None, shuffle_orders=True):
+    def serialization(self, order={"hilbert", "hilbert-trans"}, depth=None, shuffle_orders=True):
         """
         Point Cloud Serialization
 
@@ -88,6 +84,7 @@ class PointCloud(Dict):
         # 可以将inverse看成order的逆函数!!! 即: inverse[m, order[m, i]] = i
         # 针对上面,回顾小知识!
         # numpy里面传出来的broadcasting机制!!!
+        # Tensor.scatter_和Tensor.gather
         # Tensor.scatter_(dim, index, src, *, reduce=None) → Tensor
         # For a 3-D tensor, self is updated as:
         # self[index[i][j][k]][j][k] = src[i][j][k]  # if dim == 0
@@ -97,6 +94,9 @@ class PointCloud(Dict):
         # self[index[i][j]][j] = src[i][j]  # if dim == 0
         # self[i][index[i][j]] = src[i][j]  # if dim == 1
         # This is the reverse operation of the manner described in Tensor.gather(dim, index) → Tensor.
+        # self[i][j][k] = src[index[i][j][k]][j][k]  # if dim == 0
+        # self[i][j][k] = src[i][index[i][j][k]][k]  # if dim == 1
+        # self[i][j][k] = src[i][j][index[i][j][k]]  # if dim == 2
 
         if shuffle_orders:  # 应当是对扫描方式的shuffle!
             perm = torch.randperm(code.shape[0])
@@ -107,6 +107,10 @@ class PointCloud(Dict):
         self.serialized_code = code
         self.serialized_order = order
         self.serialized_inverse = inverse
+
+    def grouping(self, num_group:int, group_size:int):
+        self.s_o_n, self.s_o_xyz, self.s_idx, self.s_xyz, self.s_order, self.s_inverse = group_by_count(self, num_group, group_size)
+
 
     def sparsify(self, pad=96):
         """
@@ -148,32 +152,52 @@ class PointCloud(Dict):
         self["sparse_conv_feat"] = sparse_conv_feat
     
 @torch.inference_mode()
-def group(xyz_pc:PointCloud, num_group:int, group_size:int):
-    '''
-        input: 
-        xyz_pc.coord  shape 为 (N1+N2+.....+Nb) x 3.
-        xyx_pc.batch  应当形如[N1s 0, N2s 1,..., Nbs (b-1)]
-        xyz_pc.batch_bin 应为[N1, N2,..., Nb]
-        ---------------------------
-    '''
-    # pyg方式: 按比例
-    # c_idx = fps(xyz_pc.coord, xyz_pc.batch, ratio=0.03)
-    # c  = xyz_pc.coord[c_idx]
-    # c_batch = xyz_pc.batch[c_idx]
-    # patch_idx = knn(xyz_pc.coord, c, self.group_size,xyz_pc.batch, c_batch)
+def group_by_count(xyz_pc:PointCloud, num_group:int, group_size:int):
+    # 不得不面临将点云都搞成传统的Batch模式!
+    # 假设xyx_pc已经serialized!
+    # 这个地方很花了点时间.基本功不牢呀! index broadcasting 和 scatter_, gather的关系!
+    from pointops import knn_query as knn
+    from pointops import farthest_point_sampling as fps
     
     # pointops方式 :按量,返回结果还包括距离
-    new_offset = (torch.ones_like( xyz_pc.batch_bin)* num_group).cumsum(0).int()
-    samples_idx = fps(xyz_pc.coord, xyz_pc.offset, new_offset)
-    new_xyz  = xyz_pc.coord[samples_idx]
-    idx, dist = knn(group_size, xyz_pc.coord, xyz_pc.offset, new_xyz,new_offset)
+    # s_ 解读为 samples, n_ 解读为neighbors, o_解读为ordered.
+    # batch_size = xyz_pc.batch[-1] + 1
+    s_offset = (torch.ones_like( xyz_pc.batch_bin)* num_group).cumsum(0).int() #[batch_size]
+    s_idx = fps(xyz_pc.coord, xyz_pc.offset, s_offset)  # [batch_size*num_group ] 
 
-    # idx_base = torch.arange(0, batch_size, device=xyz_pc.device).view(-1, 1, 1) * num_points
-    # idx = idx + idx_base
-    # idx = idx.view(-1)
-    # neighborhood = xyz_pc.view(batch_size * num_points, -1)[idx, :]
-    # neighborhood = neighborhood.view(batch_size, self.num_group, self.group_size, 3).contiguous()
-    # # normalize
-    # neighborhood = neighborhood - center.unsqueeze(2)
-    # return neighborhood, center
-    return idx , dist    
+    s_xyz  = xyz_pc.coord[s_idx]  # [batch_size*num_group, coord's dim]
+    s_n_idx, _dist = knn(group_size, xyz_pc.coord, xyz_pc.offset, s_xyz,s_offset)    ## [batch_size*num_group, group_size ], _
+    s_n = xyz_pc.coord[s_n_idx]  # [batch_size*num_group , group_size, coord's dim]
+    s_n = s_n - s_xyz.unsqueeze(1)  # [batch_size*num_group , group_size, vector's dim]
+
+    #排序,根据原有的排序信息,获得排序!
+    s_order = torch.argsort(xyz_pc.serialized_code[:, s_idx])    # 获得样本的各种序列吗, 种类排序! [order_s, batch_size * num_group]
+    src=torch.arange(0, s_order.shape[1], device=s_order.device).repeat(s_order.shape[0], 1)
+    s_inverse = torch.zeros_like(s_order, device=s_order.device).scatter_(dim=1,index=s_order,src=src,) # [order_s, batch_size * num_group]
+    # assert s_inverse[0, s_order[0, i]] == i
+    # s_idx[s_order].gather(1, s_inverse)- s_idx 等于零矩阵!!! 注意这个关系!!!
+
+    s_o_xyz = s_xyz[s_order]      # [order_s, batch_size * num_group , coord's dim]
+    s_o_n = s_n[s_order]          # [order_s, batch_size * num_group , group_size, coord's dim]
+    # print(s_xyz.shape)
+    # 往下转成,传统的batch 方式!, 算了, 放到外面去处理
+    # s_idx是样本和数据之间的对应桥梁!!!
+    return s_o_n, s_o_xyz, s_idx, s_xyz, s_order, s_inverse
+
+# @torch.inference_mode()
+# def group_by_ratio(xyz_pc:PointCloud, group_size:int, ratio=0.1):  # 这个应当弃用,效率不高!!!!!!
+#     '''
+#         input: 
+#         xyz_pc.coord  shape 为 (N1+N2+.....+Nb) x 3.
+#         xyx_pc.batch  应当形如[N1s 0, N2s 1,..., Nbs (b-1)]
+#         xyz_pc.batch_bin 应为[N1, N2,..., Nb]
+#         ---------------------------
+#     '''
+#     from torch_geometric.nn import fps, knn
+#     samples_idx = fps(xyz_pc.coord, xyz_pc.batch, ratio=ratio)  # 样本点的index. 采样,样本点当作中心.
+#     samples  = xyz_pc.coord[samples_idx]                # 样本点的坐标
+#     samples_batch = xyz_pc.batch[samples_idx]           # 样本点的批号
+#     patch_idx = knn(xyz_pc.coord, samples, group_size,xyz_pc.batch, samples_batch)  # 很奇怪的一个返回结果!
+#     patch_idx = patch_idx[1].reshape((-1,group_size))
+
+#     return patch_idx, samples_idx

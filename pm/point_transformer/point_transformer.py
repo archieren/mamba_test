@@ -1,7 +1,7 @@
 """
 基本上参照/抄
 Point Transformer - V3 Mode1
-PTV3相对PointMamba,非常具有思想内涵.
+PTV3相对PointMamba,非常具有思想内涵. 但不知是否真的解决了他想要解决的问题!
 值得将这个代码注释解读一下.
 """
 

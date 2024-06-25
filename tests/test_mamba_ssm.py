@@ -10,13 +10,13 @@ def test_mamba_ssm():
     from torchinfo import summary
     import torch.autograd.profiler as profiler 
     
-    batch, length, dim = 2, 1024*64, 64
+    batch, length, dim = 2, 1024*16, 32
     x = torch.randn(batch, length, dim).to(device)
     x.requieres_grad = True
     model = Mamba(
         # This module uses roughly 3 * expand * d_model^2 parameters
         d_model=dim, # Model dimension d_model
-        d_state=16,  # SSM state expansion factor
+        d_state=32,  # SSM state expansion factor
         d_conv=4,    # Local convolution width
         expand=2,    # Block expansion factor
     ).to(device)

@@ -10,7 +10,7 @@ import torch
 
 from pm.utils.misc import offset2batch,batch2offset
 from pm.sfc_serialization import encode
-from pm.utils.point_cloud import PointCloud, group
+from pm.utils.point_cloud import PointCloud, group_by_count
 
 
 device='cuda'
@@ -119,21 +119,28 @@ def test_PointCloud():
     print("About sparse_conv_feat: batch size")
     print(pc.sparse_conv_feat.batch_size)
 
-def test_fps_pyg():
-    ###pyg提供的工具,适合在graph上作!!!
-    from torch_geometric.nn import fps
+def test_grouping_by_fps():
+    ###pyg提供的工具,适合在graph上作!!!但性能真不咋地!!
     pc = make_PointCloud()
+    pc.serialization()
     start_time = time.time()
-    idx, dist = group(pc,1024, 7) # (1024*)
+    # s_o_n, s_o_xyz, s_idx, s_xyz, s_order, s_inverse
+    s_o_n, _ , s_idx, _, s_order, s_inverse= group_by_count(pc,4, 3) # (1024*)
     time_it(start_time)
-    print("Idx:")
-    print(pc.coord[idx[0]])
-    print(pc.batch[idx[:,0]][0:10])
-    # print(dist)
-    # print(dist[1,0:7])
-    time_it(start_time)
-    #print(pc.coord[patch_index[0,0:7]])
+    print("Samples_idx:")
+    print(s_idx.shape)
+    # print(pc.coord[s_idx].shape)  
+    # print(pc.batch[s_idx].shape)
+    print("Different Order of samples:")
+    # print(s_o_n[0,:,:,0])
+    # print(s_o_n[1,:,:,0])
+    print(s_order)
+    print(s_idx[s_order])
+    ddd = s_idx[s_order].gather(1, s_inverse)- s_idx
+    print("ddd应当是零矩阵")
+    print(ddd)  
 
+    
 def test_fps_pointnet2():
     from pointnet2_ops.pointnet2_utils import furthest_point_sample as fps
     pc = torch.randn(4, 1000000, 3, device=device)
@@ -242,7 +249,7 @@ def test_point_sis():
     input()
 
 # test_PointCloud()
-test_fps_pyg()
+test_grouping_by_fps()
 # test_fps_pointnet2()
 # test_pointmlp()
 # test_curvenet()
