@@ -10,7 +10,8 @@ import torch
 
 from pm.utils.misc import offset2batch,batch2offset
 from pm.sfc_serialization import encode
-from pm.utils.point_cloud import PointCloud, group_by_count
+from pm.utils.point_cloud import PointCloud
+from pm.pointmamba import group_by_fps_knn
 
 
 device='cuda'
@@ -124,16 +125,16 @@ def test_grouping_by_fps():
     pc = make_PointCloud()
     pc.serialization()
     start_time = time.time()
-    # s_o_n, s_o_xyz, s_idx, s_xyz, s_order, s_inverse
-    s_o_n, _ , s_idx, _, s_order, s_inverse= group_by_count(pc,4, 3) # (1024*)
+    s_idx, s_n, s_xyz, s_order, s_inverse= group_by_fps_knn(pc,4, 3) # (1024*)
     time_it(start_time)
     print("Samples_idx:")
     print(s_idx.shape)
-    # print(pc.coord[s_idx].shape)  
-    # print(pc.batch[s_idx].shape)
+
+    print(" Samples neighbor and xyz")
+    print(s_n.shape)
+    print(s_xyz.shape)
+
     print("Different Order of samples:")
-    # print(s_o_n[0,:,:,0])
-    # print(s_o_n[1,:,:,0])
     print(s_order)
     print(s_idx[s_order])
     ddd = s_idx[s_order].gather(1, s_inverse)- s_idx
@@ -226,33 +227,26 @@ def test_point_sis():
 
     from pathlib import Path
     from torch.utils.cpp_extension import CUDA_HOME
-    from cumm.nvrtc import get_cudadevrt_path
-    from cumm.common import _get_cuda_include_lib
 
-    # cumm.common 的 231-232做了修改的!!!
-    # 原代码里的cuda路径有问题!
-    print(get_cudadevrt_path())
-    print(_get_cuda_include_lib())    
-    from pm.pointmamba import PointSIS
-    model =PointSIS(3).to(device)
+    from pm.pointmamba import PointSIS, make_default_config
+    config = make_default_config()
+    model =PointSIS(config).to(device)
     dc = make_data_dict()
-    pc = model(dc)
-    print(pc.keys())
-    print("About sparse_conv_feat: features's shape")
-    print(pc.sparse_conv_feat.features.shape)
-    with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
-      with profiler.record_function("model_forward"):
-          output = model(dc)
-          loss = output.sparse_conv_feat.features.sum()
-      with profiler.record_function("model_backward"):
-          loss.backward()
+    sn = model(dc)
+    print(sn.shape)
+    # with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
+    #   with profiler.record_function("model_forward"):
+    #       output = model(dc)
+    #       loss = output.sum()
+    #   with profiler.record_function("model_backward"):
+    #       loss.backward()
     input()
 
 # test_PointCloud()
-test_grouping_by_fps()
+# test_grouping_by_fps()
 # test_fps_pointnet2()
 # test_pointmlp()
 # test_curvenet()
 
-#test_point_transformer()
-#test_point_sis()
+# test_point_transformer()
+test_point_sis()

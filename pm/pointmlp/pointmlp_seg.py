@@ -53,7 +53,7 @@ class LocalGrouper(nn.Module):
         if self.normalize is not None:
             add_channel=3 if self.use_xyz else 0
             self.affine_alpha = nn.Parameter(torch.ones([1,1,1,channel + add_channel]))
-            self.affine_beta = nn.Parameter(torch.zeros([1, 1, 1, channel + add_channel]))
+            self.affine_beta = nn.Parameter(torch.zeros([1,1,1,channel + add_channel]))
 
     def forward(self, xyz, points):
         B, N, C = xyz.shape

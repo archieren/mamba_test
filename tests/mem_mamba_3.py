@@ -8,7 +8,7 @@ device = "cuda"
 
 B, L, D, N = 16, 64, 128, 16
 
-config = MambaConfig(d_model=D, n_layers=8, d_state=N)
+config = MambaConfig(d_model=D, n_layers=32, d_state=N)
 model = Mamba(config).to(device)
 
 torch.cuda.empty_cache()
