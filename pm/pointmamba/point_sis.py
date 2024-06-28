@@ -19,7 +19,7 @@ from mamba_ssm.modules.mamba_simple import Mamba
 # 直接使用mamba推荐的Block, 不像Point Mamba抄过来! 
 # 这需要看片文章"On Layer Normalization in the Transformer Architecture"
 from mamba_ssm.modules.block import Block 
-from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn, rms_norm_fn
+#from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn, rms_norm_fn
 
 # from knn_cuda import KNN
 
@@ -95,49 +95,47 @@ class Feature_Encoder(nn.Module):
     def __init__(self, encoder_channel):
         super().__init__()
         print(encoder_channel)
-        self.e_c = encoder_channel
+        self.e_o = encoder_channel
+        self.e_i = 128
         self.first_conv = nn.Sequential(
-            nn.Conv1d(3, self.e_c, 1),
-            nn.BatchNorm1d(self.e_c),
+            nn.Conv1d(3, self.e_i, 1),
+            nn.BatchNorm1d(self.e_i),
             nn.ReLU(inplace=True),
-            nn.Conv1d(self.e_c, self.e_c *2 , 1)
+            nn.Conv1d(self.e_i, self.e_i *2 , 1)
         )
         self.second_conv = nn.Sequential(
-            nn.Conv1d(self.e_c *4, self.e_c *4, 1),
-            nn.BatchNorm1d(self.e_c *4),
+            nn.Conv1d(self.e_i *4, self.e_i *4, 1),
+            nn.BatchNorm1d(self.e_i *4),
             nn.ReLU(inplace=True),
-            nn.Conv1d(self.e_c *4, self.e_c, 1)
+            nn.Conv1d(self.e_i *4, self.e_o, 1)
         )
 
     def forward(self, feature):
         '''
-            point_groups : BG N 3
+            point_groups : BG N 3  ( N 邻居的数量)
             -----------------
             feature_global : BG C
         '''
         bg, n, _ = feature.shape
         # encoder
-        feature = feature.transpose(-1, -2)  # 调整形式!
-        #print("1",feature.shape)
-        feature = self.first_conv(feature)
-        #print("2",feature.shape)
-        feature_global = torch.max(feature, dim=-1, keepdim=True)[0]
-        #print("3",feature_global.shape)
-        feature = torch.cat([feature_global.expand(-1, -1, n), feature], dim=-2)
-        #print("4",feature.shape)
-        feature = self.second_conv(feature)
-        #print("5",feature.shape)
-        feature_global = torch.max(feature, dim=-1, keepdim=False)[0]
+        feature = feature.transpose(-1, -2)  # 调整形式! BG N 3 -> BG 3 N
+        feature = self.first_conv(feature)   # BG 3 N -> BG e_i N
+        feature_global = torch.max(feature, dim=-1, keepdim=True)[0] # BG e_i N -> BG e_i 1
+        feature_global = feature_global.expand(-1, -1, n)   # BG e_i 1 -> BG e_i N
+        feature = torch.cat([feature_global, feature], dim=-2) # BG e_i N , BG e_i N -> BG e_i*2 N 
+        feature = self.second_conv(feature)  # BG e_i*2 N -> BG C N
+        feature_global = torch.max(feature, dim=-1, keepdim=False)[0] # BG C N -> BG C
         return feature_global
 
 class Pos_Encoder(nn.Module):  # 位置也编码!!
     def __init__(self, encoder_channel):
         super().__init__()
-        self.e_c = encoder_channel
+        self.e_o = encoder_channel
+        self.e_i = 128
         self.encoder = nn.Sequential(
-            nn.Linear(3, self.e_c *2),
+            nn.Linear(3, self.e_i *2),
             nn.GELU(),
-            nn.Linear(self.e_c * 2, self.e_c)            
+            nn.Linear(self.e_i * 2, self.e_o)            
         )
     
     def forward(self, pos):
@@ -146,26 +144,39 @@ class Pos_Encoder(nn.Module):  # 位置也编码!!
         """
         return self.encoder(pos)
 
-# class Block(nn.Module):
-#     def __init__(self, dim, config,layer_idx):
-#         super().__init__()
-#         self.stem = Mamba(d_model=dim, **config.mamba_config, layer_idx=layer_idx)
+class MixerLayers(nn.Module):
+    """
+    残差式板块栈。直接借用Mamba官方实现里面的Block。
+    这个类应当对应...mixer_seq_simple...里的MixerModel
+    我看很多有关Mamba的网络，基本都是抄改这一块！！！没必要。直接将对应缺省值的分支留下就可以了！
+    """
+    def __init__(self, config):
+        super().__init__()
+        self.out_indices = config.out_indices
+        self.blocks = nn.ModuleList([self.create_block(config.d_model, config.mamba_config, layer_idx) 
+                                     for layer_idx in range(config.depth)])
+        self.norm_f = nn.LayerNorm(config.d_model)
+
+    @staticmethod
+    def create_block(d_model, mamba_cfg, layer_idx):  
+        # 直接用Mamba里实现的Block，基本用缺省值!
+        mixer_cls = partial(Mamba, layer_idx=layer_idx, **mamba_cfg)
+        norm_cls = partial(nn.LayerNorm )
+        mlp_cls = nn.Identity
+        block = Block(d_model, mixer_cls, mlp_cls , norm_cls=norm_cls,)
+        # block.layer_idx = layer_idx
+        return block
     
-#     def forward(self, s):
-#         """
-#         B G C -> B G C
-#         """
-#         s = self.stem(s)
-#         return s
-
-def create_block(d_model, ssm_cfg, layer_idx):  # 参考Point_Mamba里的,去掉所有的缺省值设置!
-    norm_epsilon=1e-5 
-    mixer_cls = partial(Mamba, layer_idx=layer_idx, **ssm_cfg)
-    norm_cls = partial(nn.LayerNorm , eps=norm_epsilon)
-    block = Block(d_model, mixer_cls, mlp_cls=nn.Identity , norm_cls=norm_cls,)
-    # block.layer_idx = layer_idx
-    return block
-
+    def forward(self, hidden_states):
+        residual = None
+        feature_list = []
+        for idx, block in enumerate(self.blocks):
+            hidden_states, residual = block( hidden_states, residual)
+            if idx in self.out_indices:
+                r_o = (hidden_states + residual) if residual is not None else hidden_states
+                h_o = self.norm_f(r_o.to(dtype=self.norm_f.weight.dtype))
+                feature_list.append(h_o)
+        return feature_list            
 
 class PointSIS(nn.Module):
     def __init__(self, config):
@@ -173,14 +184,14 @@ class PointSIS(nn.Module):
         self.order = [config.order] if isinstance(config.order, str) else config.order
         self.shuffle_orders = config.shuffle_orders
         self.config = config
-        dim = config.trans_dim
+        d_model = config.trans_dim
 
         self.grouper = Grouper(config.num_group, config.group_size)
+        
         self.feature_encoder = Feature_Encoder(config.feature_dims)  # 其实config.feature_dims == config.pos_dim
         self.pos_encoder = Pos_Encoder(config.pos_dims)
 
-        self.layers = nn.ModuleList([create_block(dim, config.mamba_config, layer_idx) for layer_idx in range(config.depth)])
-
+        self.mixers = MixerLayers(config)
 
     def forward(self, data_dict):
         point = PointCloud(data_dict)
@@ -192,16 +203,10 @@ class PointSIS(nn.Module):
         s = s_n + s_xyz
         s = s[s_order]
         print(s.shape)
-        #s = rearrange(s, "o (b g) d -> (o b) g d", b=b_s)
-        s = rearrange(s, "o (b g) d -> b (o g) d", b=b_s)  # 将两个排序拼接,参看PointMamba的第四版!!
-        print(s.shape)
-        hidden_states =s
-        residual = None
-        for layer in self.layers:
-            hidden_states, residual = layer( hidden_states, residual)
-            #hidden_states = self.drop_out_in_block(hidden_states)
+        s = rearrange(s, "o (b g) d -> b (o g) d", b=b_s)  # 将各个排序拼接,参看PointMamba的第四版!!
+        s = self.mixers(s)
 
-        print(hidden_states.shape)
-        return hidden_states
+        print(s[-1].shape)
+        return s[-1]
 
 
