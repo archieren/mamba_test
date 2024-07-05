@@ -133,7 +133,7 @@ class Pos_Encoder(nn.Module):  # 位置也编码!!
         self.e_o = encoder_channel
         self.e_i = 128
         self.encoder = nn.Sequential(
-            nn.Linear(3, self.e_i *2),
+            nn.Linear(3, self.e_i *2),   # 如果换成SparseConv的化， 就是所谓的xCPE！ See PVT3
             nn.GELU(),
             nn.Linear(self.e_i * 2, self.e_o)            
         )
@@ -148,7 +148,7 @@ class MixerLayers(nn.Module):
     """
     残差式板块栈。直接借用Mamba官方实现里面的Block。
     这个类应当对应...mixer_seq_simple...里的MixerModel
-    我看很多有关Mamba的网络，基本都是抄改这一块！！！没必要。直接将对应缺省值的分支留下就可以了！
+    我看很多有关Mamba的网络，基本都是抄改这一块！！！没必要全文摘抄。直接将对应缺省值的分支留下就可以了！
     """
     def __init__(self, config):
         super().__init__()
@@ -163,7 +163,7 @@ class MixerLayers(nn.Module):
         mixer_cls = partial(Mamba, layer_idx=layer_idx, **mamba_cfg)
         norm_cls = partial(nn.LayerNorm )
         mlp_cls = nn.Identity
-        block = Block(d_model, mixer_cls, mlp_cls , norm_cls=norm_cls,)
+        block = Block(d_model, mixer_cls, mlp_cls , norm_cls=norm_cls,)  # 可以了解，Block里的缺省路径 Add -> LN -> Mixer
         # block.layer_idx = layer_idx
         return block
     
@@ -172,11 +172,21 @@ class MixerLayers(nn.Module):
         feature_list = []
         for idx, block in enumerate(self.blocks):
             hidden_states, residual = block( hidden_states, residual)
-            if idx in self.out_indices:
+            if idx in self.out_indices:  # 此时就需要补一个 Add -> LN 过程！！！ 才能得到合适的hidden_state output!
                 r_o = (hidden_states + residual) if residual is not None else hidden_states
                 h_o = self.norm_f(r_o.to(dtype=self.norm_f.weight.dtype))
                 feature_list.append(h_o)
         return feature_list            
+
+class Decoder(nn.Module):
+    """
+    解码，不能采用PointMlp的上采样的方式。
+    """
+    def __init__(self, config):
+        super().__init__()
+
+    def forward(self, ):
+        pass
 
 class PointSIS(nn.Module):
     def __init__(self, config):
@@ -207,6 +217,7 @@ class PointSIS(nn.Module):
         s = self.mixers(s)
 
         print(s[-1].shape)
+        # 解码成了问题？？？
         return s[-1]
 
 

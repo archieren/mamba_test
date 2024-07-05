@@ -174,6 +174,7 @@ def test_pointmlp():
 
     print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
     print(f"Peak CUDA Memory Usage: {prof.total_average().cuda_memory_usage / (1024 ** 2)} MB")
+    input()
 
 def test_curvenet():
     from pm.curvenet import CurveNet
@@ -249,8 +250,8 @@ def test_point_sis():
 # test_PointCloud()
 # test_grouping_by_fps()
 # test_fps_pointnet2()
-# test_pointmlp()
+test_pointmlp()
 # test_curvenet()
 
 # test_point_transformer()
-test_point_sis()
+# test_point_sis()
