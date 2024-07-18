@@ -5,6 +5,7 @@ from functools import partial
 
 import numpy as np
 import torch
+import torch_scatter
 import torch.nn as nn
 from torch import Tensor
 from einops import rearrange
@@ -35,6 +36,7 @@ from pm.pointmamba import PCModule
 1)各种点云的尺度,跨度很大!
 2)点云是不规则数据集
 3)放弃点集和空间逼近的思路(KNN), 用SFC方法,来结构化点云!(可能这个会影响一批模型)
+理解：(寻求一个合理的点云遍历方法，反而放到重要的位置！)
 
 在Voxel影像上,还看到以下几项工作:
 1)SegMamba
@@ -95,8 +97,8 @@ class Feature_Encoder(nn.Module):
     def __init__(self, encoder_channel):
         super().__init__()
         print(encoder_channel)
-        self.e_o = encoder_channel
-        self.e_i = 128
+        self.e_o = encoder_channel       # 特征编码输出的通道数！
+        self.e_i = 128                   # 特征编码内部使用的通道数！
         self.first_conv = nn.Sequential(
             nn.Conv1d(3, self.e_i, 1),
             nn.BatchNorm1d(self.e_i),
@@ -119,15 +121,15 @@ class Feature_Encoder(nn.Module):
         bg, n, _ = feature.shape
         # encoder
         feature = feature.transpose(-1, -2)  # 调整形式! BG N 3 -> BG 3 N
-        feature = self.first_conv(feature)   # BG 3 N -> BG e_i N
-        feature_global = torch.max(feature, dim=-1, keepdim=True)[0] # BG e_i N -> BG e_i 1
-        feature_global = feature_global.expand(-1, -1, n)   # BG e_i 1 -> BG e_i N
-        feature = torch.cat([feature_global, feature], dim=-2) # BG e_i N , BG e_i N -> BG e_i*2 N 
-        feature = self.second_conv(feature)  # BG e_i*2 N -> BG C N
+        feature = self.first_conv(feature)   # BG 3 N -> BG e_i*2 N
+        feature_global = torch.max(feature, dim=-1, keepdim=True)[0] # BG e_i*2 N -> BG e_i*2 1
+        feature_global = feature_global.expand(-1, -1, n)   # BG e_i*2 1 -> BG e_i*2 N
+        feature = torch.cat([feature_global, feature], dim=-2) # BG e_i*2 N , BG e_i*2 N -> BG e_i*4 N 
+        feature = self.second_conv(feature)  # BG e_i*4 N -> BG C N
         feature_global = torch.max(feature, dim=-1, keepdim=False)[0] # BG C N -> BG C
         return feature_global
 
-class Pos_Encoder(nn.Module):  # 位置也编码!!
+class Pos_Encoder(nn.Module):  # 位置也编码!! 先放到这，肯定要修改的！
     def __init__(self, encoder_channel):
         super().__init__()
         self.e_o = encoder_channel
@@ -203,21 +205,40 @@ class PointSIS(nn.Module):
 
         self.mixers = MixerLayers(config)
 
+        self.fuse = nn.Sequential(
+            nn.Linear(config.feature_dims * len(config.out_indices), config.feature_dims),
+            nn.LayerNorm(config.feature_dims)
+        )
+
     def forward(self, data_dict):
         point = PointCloud(data_dict)
         point.serialization(order=self.order, shuffle_orders=self.shuffle_orders)
         b_s = point.batch[-1]+1
-        s_idx, s_n, s_xyz, s_order, s_inverse = self.grouper(point)
+        o_s = len(self.order)
+        s_idx, s_n, s_xyz, s_order, s_inverse = self.grouper(point)        
+        # s_order, s_inverse 均为 order_size batch_size*num_group
         s_n = self.feature_encoder(s_n)
         s_xyz = self.pos_encoder(s_xyz)
         s = s_n + s_xyz
-        s = s[s_order]
-        print(s.shape)
+        # s 为 batch_size*num_group d
+
+        #s = s[s_order]
+        s = s.unsqueeze(0).repeat(o_s,1,1)  # => order_size batch_size*num_group d
+        s = torch_scatter.scatter(s,index=s_order, dim=1) # 排序 => order_size batch_size*num_group d
         s = rearrange(s, "o (b g) d -> b (o g) d", b=b_s)  # 将各个排序拼接,参看PointMamba的第四版!!
         s = self.mixers(s)
-
-        print(s[-1].shape)
+        s = torch.cat(s, dim= -1)                          # 将各层mamba的结果，拼接！！
+        print(s.shape)
+        s = self.fuse(s)                                   # 融合 
+        s = rearrange(s, "b (o g) d -> o (b g) d", o=o_s)
+        s = torch_scatter.scatter(s,index=s_inverse, dim=1 )
+        # order 和 inverse 的关系！！！
+        # ss = torch_scatter.scatter(s,index=s_order, dim=1)
+        # sss= torch_scatter.scatter(ss,index=s_inverse, dim=1 )
+        # print("www",s[0,0,-5:-1])
+        # print("www",sss[0,0,-5:-1])
         # 解码成了问题？？？
-        return s[-1]
+        # 需不需要Propagation机制？
+        return s
 
 

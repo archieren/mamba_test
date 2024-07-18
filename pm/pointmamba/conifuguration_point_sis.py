@@ -32,7 +32,7 @@ class PointSISConfig():
         # About SFC
         #Spatial Filling Curve!
         #{"z", "z-trans", "hilbert", "hilbert-trans"}
-        order             =["z", "z-trans", "hilbert", "hilbert-trans"]
+        order             =["hilbert", "hilbert-trans"] #["z", "z-trans", "hilbert", "hilbert-trans"]
         shuffle_orders    =False
         # About group
         num_group:    int = 1024 # 16384
@@ -43,7 +43,7 @@ class PointSISConfig():
         # mamba
         d_model:      int = trans_dim # 未将它放到mamba_config里！
         depth:        int = 12       # 控制层数！！！
-        out_indices       = [3, 7, 11]
+        out_indices       = [3,7,11]
         mamba_config = asdict(Mamba1Config())
         #Fatures encoding!
         cls_mode=False

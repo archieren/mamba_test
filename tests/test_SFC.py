@@ -236,22 +236,22 @@ def test_point_sis():
     model =PointSIS(config).to(device)
     dc = make_data_dict()
     sn = model(dc)
-    # with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
-    #   with profiler.record_function("model_forward"):
-    #       output = model(dc)
-    #       loss = output.sum()
-    #   with profiler.record_function("model_backward"):
-    #       loss.backward()
-    # print(prof.key_averages().table(sort_by="cuda_time_total",row_limit=10))
-    # print(f"Peak CUDA Memory Usage: {prof.total_average().cuda_memory_usage / (1024 ** 2)} MB")
+    with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
+      with profiler.record_function("model_forward"):
+          output = model(dc)
+          loss = output.sum()
+      with profiler.record_function("model_backward"):
+          loss.backward()
+    print(prof.key_averages().table(sort_by="cuda_time_total",row_limit=10))
+    print(f"Peak CUDA Memory Usage: {prof.total_average().cuda_memory_usage / (1024 ** 2)} MB")
     
     input()
 
 # test_PointCloud()
 # test_grouping_by_fps()
 # test_fps_pointnet2()
-test_pointmlp()
+# test_pointmlp()
 # test_curvenet()
 
 # test_point_transformer()
-# test_point_sis()
+test_point_sis()
