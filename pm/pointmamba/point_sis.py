@@ -64,14 +64,15 @@ def group_by_fps_knn(xyz_pc:PointCloud,
     s_offset = (torch.ones_like( xyz_pc.batch_bin)* num_group).cumsum(0).int() #[batch_size]
     s_idx = fps(xyz_pc.coord, xyz_pc.offset, s_offset)  # [batch_size*num_group ] 
 
-    s_xyz  = xyz_pc.coord[s_idx]  # [batch_size*num_group, coord's dim]
+    # 此时 还不用考虑mesh提供的norm作为特征的提取基础，直接用坐标和临域关系来构造特征！
+    s_xyz  = xyz_pc.coord[s_idx]                                                     # [batch_size*num_group, coord's dim]
     s_n_idx, _dist = knn(group_size, xyz_pc.coord, xyz_pc.offset, s_xyz,s_offset)    ## [batch_size*num_group, group_size ], _
-    s_n = xyz_pc.coord[s_n_idx]  # [batch_size*num_group , group_size, coord's dim]
-    s_n = s_n - s_xyz.unsqueeze(1)  # [batch_size*num_group , group_size, vector's dim]
-    s_n = s_n[:,1:, :]        # 需不需要,去掉组内第一个vector?
+    s_n = xyz_pc.coord[s_n_idx]                                                      # [batch_size*num_group , group_size, coord's dim]
+    s_n = s_n - s_xyz.unsqueeze(1)                                                   # [batch_size*num_group , group_size, vector's dim]
+    s_n = s_n[:,1:, :]                                                               # 需不需要,去掉组内第一个vector? 
     
-    #排序,根据原有的排序信息,获得排序!
-    s_order = torch.argsort(xyz_pc.serialized_code[:, s_idx])    # 获得样本的各种序列吗, 种类排序! [order_s, batch_size * num_group]
+    #排序,根据原有的SFC遍历序好,获得采样点的各总次序!
+    s_order = torch.argsort(xyz_pc.serialized_code[:, s_idx])                                           # 获得样本的各种序列吗, 种类排序! [order_s, batch_size * num_group]
     src=torch.arange(0, s_order.shape[1], device=s_order.device).repeat(s_order.shape[0], 1)
     s_inverse = torch.zeros_like(s_order, device=s_order.device).scatter_(dim=1,index=s_order,src=src,) # [order_s, batch_size * num_group]
     # assert s_inverse[0, s_order[0, i]] == i
@@ -93,23 +94,23 @@ class Grouper(nn.Module):
     def forward(self, pc:PointCloud):
         return group_by_fps_knn(pc, self.num_group, self.group_size)
 
-class Feature_Encoder(nn.Module):
+class Feature_Encoder(nn.Module):        # 改自Point Mamba！
     def __init__(self, encoder_channel):
         super().__init__()
         print(encoder_channel)
         self.e_o = encoder_channel       # 特征编码输出的通道数！
         self.e_i = 128                   # 特征编码内部使用的通道数！
         self.first_conv = nn.Sequential(
-            nn.Conv1d(3, self.e_i, 1),
-            nn.BatchNorm1d(self.e_i),
-            nn.ReLU(inplace=True),
-            nn.Conv1d(self.e_i, self.e_i *2 , 1)
+            nn.Linear(3,self.e_i), 
+            nn.LayerNorm(self.e_i),
+            nn.GELU(),                       
+            nn.Linear(self.e_i, self.e_i *2)
         )
         self.second_conv = nn.Sequential(
-            nn.Conv1d(self.e_i *4, self.e_i *4, 1),
-            nn.BatchNorm1d(self.e_i *4),
-            nn.ReLU(inplace=True),
-            nn.Conv1d(self.e_i *4, self.e_o, 1)
+            nn.Linear(self.e_i *4, self.e_i *4),
+            nn.LayerNorm(self.e_i *4 ),
+            nn.GELU(),
+            nn.Linear(self.e_i *4, self.e_o)
         )
 
     def forward(self, feature):
@@ -118,15 +119,14 @@ class Feature_Encoder(nn.Module):
             -----------------
             feature_global : BG C
         '''
-        bg, n, _ = feature.shape
-        # encoder
-        feature = feature.transpose(-1, -2)  # 调整形式! BG N 3 -> BG 3 N
-        feature = self.first_conv(feature)   # BG 3 N -> BG e_i*2 N
-        feature_global = torch.max(feature, dim=-1, keepdim=True)[0] # BG e_i*2 N -> BG e_i*2 1
-        feature_global = feature_global.expand(-1, -1, n)   # BG e_i*2 1 -> BG e_i*2 N
-        feature = torch.cat([feature_global, feature], dim=-2) # BG e_i*2 N , BG e_i*2 N -> BG e_i*4 N 
-        feature = self.second_conv(feature)  # BG e_i*4 N -> BG C N
-        feature_global = torch.max(feature, dim=-1, keepdim=False)[0] # BG C N -> BG C
+        BG, N, C = feature.shape
+        # encoder                                                     # 
+        feature = self.first_conv(feature)                            # BG N 3  -> BG N e_i*2 
+        feature_global = torch.max(feature, dim=1, keepdim=True)[0]   # BG N e_i*2 -> BG 1 e_i*2
+        feature_global = feature_global.expand(-1, N, -1)             # BG 1 e_i*2 -> BG N e_i*2
+        feature = torch.cat([feature, feature_global], dim=-1)        # BG N e_i*2 BG N e_i*2  -> BG N e_i*4
+        feature = self.second_conv(feature)                           # BG N e_i*4 -> BG N C
+        feature_global = torch.max(feature, dim=1, keepdim=False)[0]  # BG N C -> BG C
         return feature_global
 
 class Pos_Encoder(nn.Module):  # 位置也编码!! 先放到这，肯定要修改的！
@@ -196,18 +196,30 @@ class PointSIS(nn.Module):
         self.order = [config.order] if isinstance(config.order, str) else config.order
         self.shuffle_orders = config.shuffle_orders
         self.config = config
-        d_model = config.trans_dim
 
-        self.grouper = Grouper(config.num_group, config.group_size)
-        
+        self.grouper = Grouper(config.num_group, config.group_size)        
         self.feature_encoder = Feature_Encoder(config.feature_dims)  # 其实config.feature_dims == config.pos_dim
         self.pos_encoder = Pos_Encoder(config.pos_dims)
-
         self.mixers = MixerLayers(config)
+        self.fuse_e = nn.Sequential(                                 # 将两个编码合并！！！
+            nn.Linear(config.feature_dims+config.pos_dims, config.feature_dims),
+            nn.LayerNorm(config.feature_dims),
+            nn.GELU(),
+            nn.Linear(config.feature_dims, config.d_model)
+        )
 
-        self.fuse = nn.Sequential(
-            nn.Linear(config.feature_dims * len(config.out_indices), config.feature_dims),
-            nn.LayerNorm(config.feature_dims)
+        self.fuse_f = nn.Sequential(                                 #合并各层的特征。
+            nn.Linear(config.d_model * len(config.out_indices), config.d_model),
+            nn.LayerNorm(config.d_model),
+            nn.GELU(),
+            nn.Linear(config.d_model, config.d_model)
+        )
+
+        self.fuse_o = nn.Sequential(                                 #合并各排序的特征。
+            nn.Linear(config.d_model * len(config.order), config.d_model),
+            nn.LayerNorm(config.d_model),
+            nn.GELU(),
+            nn.Linear(config.d_model, config.d_model)
         )
 
     def forward(self, data_dict):
@@ -217,28 +229,20 @@ class PointSIS(nn.Module):
         o_s = len(self.order)
         s_idx, s_n, s_xyz, s_order, s_inverse = self.grouper(point)        
         # s_order, s_inverse 均为 order_size batch_size*num_group
-        s_n = self.feature_encoder(s_n)
-        s_xyz = self.pos_encoder(s_xyz)
-        s = s_n + s_xyz
-        # s 为 batch_size*num_group d
-
-        #s = s[s_order]
-        s = s.unsqueeze(0).repeat(o_s,1,1)  # => order_size batch_size*num_group d
-        s = torch_scatter.scatter(s,index=s_order, dim=1) # 排序 => order_size batch_size*num_group d
+        s_n = self.feature_encoder(s_n)                   # => batch_size*num_group feature_size
+        s_xyz = self.pos_encoder(s_xyz)                   # => batch_size*num_group feature_size  
+        s = torch.cat([s_n, s_xyz], dim= -1)
+        s = self.fuse_e(s)                                 # 融合各编码 => batch_size*num_group d
+        s = s.unsqueeze(0).repeat(o_s,1,1)                 # 为每种排序准备排序的数据 => order_size batch_size*num_group d
+        s = torch_scatter.scatter(s,index=s_order, dim=1)  # 排序 => order_size batch_size*num_group d
         s = rearrange(s, "o (b g) d -> b (o g) d", b=b_s)  # 将各个排序拼接,参看PointMamba的第四版!!
-        s = self.mixers(s)
+        s = self.mixers(s)                                 # 返回的是抽取的几个层的返回结果的列表 
         s = torch.cat(s, dim= -1)                          # 将各层mamba的结果，拼接！！
-        print(s.shape)
-        s = self.fuse(s)                                   # 融合 
-        s = rearrange(s, "b (o g) d -> o (b g) d", o=o_s)
-        s = torch_scatter.scatter(s,index=s_inverse, dim=1 )
-        # order 和 inverse 的关系！！！
-        # ss = torch_scatter.scatter(s,index=s_order, dim=1)
-        # sss= torch_scatter.scatter(ss,index=s_inverse, dim=1 )
-        # print("www",s[0,0,-5:-1])
-        # print("www",sss[0,0,-5:-1])
-        # 解码成了问题？？？
-        # 需不需要Propagation机制？
+        s = self.fuse_f(s)                                 # 融合各结果 
+        s = rearrange(s, "b (o g) d -> o (b g) d", o=o_s)  # 拆分各排序
+        s = torch_scatter.scatter(s,index=s_inverse, dim=1)# 逆排序 => order_size batch_size*num_group d
+        s = rearrange(s, "o (b g) d -> b g (o d)", b= b_s) # 调整，将同一点，在各排序情况下的特征拼接到一起！
+        s = self.fuse_o(s)                                 # 后面咋办？
         return s
 
 

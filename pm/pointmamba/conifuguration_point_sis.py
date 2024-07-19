@@ -35,13 +35,13 @@ class PointSISConfig():
         order             =["hilbert", "hilbert-trans"] #["z", "z-trans", "hilbert", "hilbert-trans"]
         shuffle_orders    =False
         # About group
-        num_group:    int = 1024 # 16384
+        num_group:    int = 8096 # 16384
         group_size:   int = 17
-        trans_dim:    int = 64       # trans_dim feature_dim pos_dim d_model 是一样的!
-        feature_dims: int = trans_dim
-        pos_dims:     int = trans_dim
+        d_model:      int = 128       # feature_dim pos_dim d_model 是一样的!, 未将d_model放到mamba_config里！
+        feature_dims: int = d_model
+        pos_dims:     int = d_model
         # mamba
-        d_model:      int = trans_dim # 未将它放到mamba_config里！
+        #d_model:      int =  
         depth:        int = 12       # 控制层数！！！
         out_indices       = [3,7,11]
         mamba_config = asdict(Mamba1Config())
