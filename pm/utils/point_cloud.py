@@ -79,7 +79,7 @@ class PointCloud(Dict):
             encode(self.grid_coord, batch=self.batch, depth=depth, order=order_) for order_ in order
         ]
         code = torch.stack(code)
-        order = torch.argsort(code)
+        order = torch.argsort(code,stable=True)
         src=torch.arange(0, code.shape[1], device=order.device).repeat(code.shape[0], 1)
         inverse = torch.zeros_like(order, device=order.device).scatter_(dim=1,index=order,src=src,)  
         # 可以将inverse看成order的逆函数!!! 即: inverse[m, order[m, i]] = i

@@ -1,9 +1,6 @@
 from typing import Union, Optional
-import math
-import random
 from functools import partial
 
-import numpy as np
 import torch
 import torch_scatter
 import torch.nn as nn
@@ -12,41 +9,40 @@ from einops import rearrange
 
 from pm.utils.misc import offset2batch,batch2offset
 
-# from timm.models.layers import trunc_normal_
-# from timm.models.layers import DropPath
-
 from mamba_ssm.modules.mamba_simple import Mamba
 
 # 直接使用mamba推荐的Block, 不像Point Mamba抄过来! 
 # 这需要看片文章"On Layer Normalization in the Transformer Architecture"
 from mamba_ssm.modules.block import Block 
-#from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn, rms_norm_fn
-
-# from knn_cuda import KNN
 
 from pm.utils.point_cloud import PointCloud
-from pm.pointmamba import PCModule
 """
 用Mamba来处理点云,目前看到的, 有下面的几项工作:
 1) PointMamba:这哥们(好像还是Baidu的!!!).到第四版,参考了PTV3的结构化思路后,按他自己的说法,又跑到PCM,Mamba3D的前头.
 2) Point Cloud Mamba:从PointMLP出发的Mamba
 3) Mamba3D: 说他的Local Norm Pooling(LNP)是相较PointMamba的优点!
+4) Serialized Point Mamba: 感觉在灌水！是个组合体。PTv3+PointMamba
+5) PoinTramba:
+6) Point Mamba:(上海交大的) 走的是OctTree的序列化路线！
 
-另外Point Transformer V3的工作值得注意(尽管他是在Transformer上的工作.)!尺度和结构化,是他想解决的问题! 
+另外Point Transformer V3的工作值得注意(尽管他是在Transformer上的工作.)!
+尺度和结构化,是他想解决的问题! 
 1)各种点云的尺度,跨度很大!
 2)点云是不规则数据集
 3)放弃点集和空间逼近的思路(KNN), 用SFC方法,来结构化点云!(可能这个会影响一批模型)
 理解：(寻求一个合理的点云遍历方法，反而放到重要的位置！)
 
+另外的一条路线：TSegFormer
+
 在Voxel影像上,还看到以下几项工作:
 1)SegMamba
 2)Voxel Mamba
+3)nnMamba
 
 
 我这里的缩写,来之传说"Space Is a latent Sequence".
 """
 
-# @torch.inference_mode()
 def group_by_fps_knn(xyz_pc:PointCloud, 
                    num_group:int,  # 分多少个组
                    group_size:int, # 组内多少个元素
@@ -122,7 +118,7 @@ class Feature_Encoder(nn.Module):        # 改自Point Mamba！
         BG, N, C = feature.shape
         # encoder                                                     # 
         feature = self.first_conv(feature)                            # BG N 3  -> BG N e_i*2 
-        feature_global = torch.max(feature, dim=1, keepdim=True)[0]   # BG N e_i*2 -> BG 1 e_i*2
+        feature_global = torch.max(feature, dim=1, keepdim=True)[0]   # BG N e_i*2 -> BG 1 e_i*2  # 为什么是max?
         feature_global = feature_global.expand(-1, N, -1)             # BG 1 e_i*2 -> BG N e_i*2
         feature = torch.cat([feature, feature_global], dim=-1)        # BG N e_i*2 BG N e_i*2  -> BG N e_i*4
         feature = self.second_conv(feature)                           # BG N e_i*4 -> BG N C

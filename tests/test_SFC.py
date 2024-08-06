@@ -41,16 +41,17 @@ def check_properties(name, mesh):
     print(f"  orientable:             {orientable}")
 
 
-def read_mesh(file_path):
+def read_mesh(file_path:str):
     mesh = o3d.io.read_triangle_mesh(file_path)
-    mesh.remove_duplicated_vertices()
+    mesh.remove_duplicated_vertices()    # Must!
+    mesh.remove_duplicated_triangles()
     mesh.compute_vertex_normals()
     return mesh
 
-def make_data_dict():
+def make_data_dict(upper_stl_path, lower_stl_path):
     # 熟悉一下数据的处理!!!
-    mesh_lower : o3d.t.geometry.TriangleMesh = read_mesh("./assets/124_lower.stl")
-    mesh_upper : o3d.t.geometry.TriangleMesh = read_mesh("./assets/124_upper.stl")
+    mesh_lower : o3d.t.geometry.TriangleMesh = read_mesh(lower_stl_path)
+    mesh_upper : o3d.t.geometry.TriangleMesh = read_mesh(upper_stl_path)
     # dtype=torch.float是必要的!!!
     points_lower = torch.asarray(np.asarray(mesh_lower.vertices),device=device, dtype=torch.float)
     normals_lower = torch.asarray(np.asarray(mesh_lower.vertex_normals), device=device, dtype=torch.float) 
@@ -79,8 +80,8 @@ def make_test_data_dict():
     data = Dict(coord=points,feat=normals, offset=offset, grid_size=1.0e-2)
     return data
    
-def make_PointCloud():    
-    data = make_data_dict()
+def make_PointCloud(upper_stl_path="./assets/124_upper.stl",lower_stl_path="./assets/124_lower.stl"):    
+    data = make_data_dict(upper_stl_path, lower_stl_path)
     pc = PointCloud(data)  
     return pc
 
@@ -165,16 +166,16 @@ def test_pointmlp():
     out = model(data, norm, cls_label)  # [2,2048,50]
     print(out.shape)
 
-    with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
-        with profiler.record_function("model_forward"):
-            output = model(data, norm, cls_label)
-            loss = output.sum()
-        with profiler.record_function("model_backward"):
-            loss.backward()
+    # with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
+    #     with profiler.record_function("model_forward"):
+    #         output = model(data, norm, cls_label)
+    #         loss = output.sum()
+    #     with profiler.record_function("model_backward"):
+    #         loss.backward()
 
-    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
-    print(f"Peak CUDA Memory Usage: {prof.total_average().cuda_memory_usage / (1024 ** 2)} MB")
-    input()
+    # print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+    # print(f"Peak CUDA Memory Usage: {prof.total_average().cuda_memory_usage / (1024 ** 2)} MB")
+    # input()
 
 def test_curvenet():
     from pm.curvenet import CurveNet
@@ -248,6 +249,96 @@ def test_point_sis():
     
     input()
 
+
+def test_patch():
+    import torch.nn as nn
+    from pm.utils.misc import offset2bincount
+
+    def get_padding_and_inverse( point):
+        pad_key = "pad"
+        unpad_key = "unpad"
+        cu_seqlens_key = "cu_seqlens_key"
+        patch_size = 1024
+        if (
+            pad_key not in point.keys()
+            or unpad_key not in point.keys()
+            or cu_seqlens_key not in point.keys()
+        ):
+            offset = point.offset
+            bincount = offset2bincount(offset)
+            bincount_pad = (
+                torch.div(
+                    bincount + patch_size - 1,
+                    patch_size,
+                    rounding_mode="trunc",
+                )
+                * patch_size
+            )
+            # only pad point when num of points larger than patch_size
+            mask_pad = bincount > patch_size
+            bincount_pad = ~mask_pad * bincount + mask_pad * bincount_pad
+            _offset = nn.functional.pad(offset, (1, 0))
+            _offset_pad = nn.functional.pad(torch.cumsum(bincount_pad, dim=0), (1, 0))
+            pad = torch.arange(_offset_pad[-1], device=offset.device)
+            unpad = torch.arange(_offset[-1], device=offset.device)
+            cu_seqlens = []
+            for i in range(len(offset)):
+                p_ = _offset_pad[i] - _offset[i]
+                unpad[_offset[i] : _offset[i + 1]] += p_
+                if bincount[i] != bincount_pad[i]:
+                    pad[
+                        _offset_pad[i + 1]
+                        - patch_size
+                        + (bincount[i] % patch_size) : _offset_pad[i + 1]
+                    ] = pad[
+                        _offset_pad[i + 1]
+                        - 2 * patch_size
+                        + (bincount[i] % patch_size) : _offset_pad[i + 1]
+                        - patch_size
+                    ]
+                pad[_offset_pad[i] : _offset_pad[i + 1]] -= p_
+
+                cu_seqlens.append(
+                    torch.arange(
+                        _offset_pad[i],
+                        _offset_pad[i + 1],
+                        step=patch_size,
+                        dtype=torch.int32,
+                        device=offset.device,
+                    )
+                )
+            point[pad_key] = pad
+            point[unpad_key] = unpad
+            point[cu_seqlens_key] = nn.functional.pad(
+                torch.concat(cu_seqlens), (0, 1), value=_offset_pad[-1]
+            )
+        return point[pad_key], point[unpad_key], point[cu_seqlens_key]
+
+    pc = make_PointCloud(upper_stl_path="./assets/124_upper.stl",lower_stl_path="./assets/124_lower.stl")
+    pc.serialization(depth=16,order={"z","z-trans","hilbert","hilbert-trans"},shuffle_orders=False)
+    pc.sparsify()
+
+    a = 0
+    b = 2**16
+    l = 1024
+    print(pc.serialized_order.shape)
+    print(pc.serialized_order[2,a])
+    print(pc.serialized_order[2,b])
+    vertices_a = pc.coord[pc.serialized_order[3, a:a+l]].cpu()
+    vertices_b = pc.coord[pc.serialized_order[3, b:b+l]].cpu()
+    pointSet_a = o3d.geometry.PointCloud()
+    pointSet_a.points = o3d.utility.Vector3dVector(vertices_a)
+    pointSet_a.paint_uniform_color([1,0.75,0])
+    pointSet_b = o3d.geometry.PointCloud()
+    pointSet_b.points = o3d.utility.Vector3dVector(vertices_b)
+    pointSet_b.paint_uniform_color([0,0.75,1])
+
+    upper_mesh = read_mesh(file_path="./assets/124_upper.stl")
+    o3d.visualization.draw_geometries([ pointSet_a,  upper_mesh]) #pointSet_b,
+    # x, y, z = get_padding_and_inverse(pc)
+    # print(x.shape, y.shape,z.shape)
+    # print(z)
+
 # test_PointCloud()
 # test_grouping_by_fps()
 # test_fps_pointnet2()
@@ -255,4 +346,6 @@ def test_point_sis():
 # test_curvenet()
 
 # test_point_transformer()
-test_point_sis()
+# test_point_sis()
+for i in range(5):
+    test_patch()
