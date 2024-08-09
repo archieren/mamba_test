@@ -30,6 +30,7 @@ from pm.utils.point_cloud import PointCloud
 1)各种点云的尺度,跨度很大!
 2)点云是不规则数据集
 3)放弃点集和空间逼近的思路(KNN), 用SFC方法,来结构化点云!(可能这个会影响一批模型)
+  再结合Swin的做法，逐步扩大RF，可以处理很长的序列！！
 理解：(寻求一个合理的点云遍历方法，反而放到重要的位置！)
 
 另外的一条路线：TSegFormer
@@ -43,8 +44,9 @@ from pm.utils.point_cloud import PointCloud
 我这里的缩写,来之传说"Space Is a latent Sequence".
 """
 
+@torch.no_grad()
 def group_by_fps_knn(xyz_pc:PointCloud, 
-                   num_group:int,  # 分多少个组
+                   num_group:int,  # 分多少个组                  # 其实取多少点！
                    group_size:int, # 组内多少个元素
                    ): 
     # 不得不面临将点云都搞成传统的Batch模式!
@@ -58,7 +60,7 @@ def group_by_fps_knn(xyz_pc:PointCloud,
     # s_ 解读为 samples, n_ 解读为neighbors, o_解读为ordered.
     # batch_size = xyz_pc.batch[-1] + 1
     s_offset = (torch.ones_like( xyz_pc.batch_bin)* num_group).cumsum(0).int() #[batch_size]
-    s_idx = fps(xyz_pc.coord, xyz_pc.offset, s_offset)  # [batch_size*num_group ] 
+    s_idx = fps(xyz_pc.coord, xyz_pc.offset, s_offset)  # [batch_size*num_group ]  # 幸亏这个fps
 
     # 此时 还不用考虑mesh提供的norm作为特征的提取基础，直接用坐标和临域关系来构造特征！
     s_xyz  = xyz_pc.coord[s_idx]                                                     # [batch_size*num_group, coord's dim]
@@ -186,7 +188,7 @@ class Decoder(nn.Module):
     def forward(self, ):
         pass
 
-class PointSIS(nn.Module):
+class PointSIS_FollowMLP(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.order = [config.order] if isinstance(config.order, str) else config.order
@@ -241,4 +243,69 @@ class PointSIS(nn.Module):
         s = self.fuse_o(s)                                 # 后面咋办？
         return s
 
+class SwinMixers(nn.Module):        # 这儿，对Patch，进行飘移操作，应当和Swin的思路一样！！          
+    """
+    """
+    def __init__(self, config):
+        super().__init__()
+        self.out_indices = config.out_indices
+        self.block_0 = self.create_block(config.d_model, config.mamba_config, 0)
+        self.block_1 = self.create_block(config.d_model, config.mamba_config, 0)  # shift
+        self.norm_f_0 = nn.LayerNorm(config.d_model)
+        self.norm_f_1 = nn.LayerNorm(config.d_model)
 
+    @staticmethod
+    def create_block(d_model, mamba_cfg, layer_idx):  
+        # 直接用Mamba里实现的Block，基本用缺省值!
+        mixer_cls = partial(Mamba, layer_idx=layer_idx, **mamba_cfg)
+        norm_cls = partial(nn.LayerNorm )
+        mlp_cls = nn.Identity
+        block = Block(d_model, mixer_cls, mlp_cls , norm_cls=norm_cls,)  # 可以了解，Block里的缺省路径 Add -> LN -> Mixer
+        # block.layer_idx = layer_idx
+        return block
+    
+    def forward(self, hidden_states,shift,shift_back, patch_size): # 目前是串联， 可以尝试并联的方式！
+        residual = None
+        hidden_states = rearrange(hidden_states, " (n p) d -> n p d", p = patch_size)
+        hidden_states, residual = self.block_0(hidden_states, residual)
+        hidden_states = (hidden_states + residual) if residual is not None else hidden_states
+        hidden_states = self.norm_f_0(hidden_states.to(dtype=self.norm_f_0.weight.dtype))
+        hidden_states = rearrange(hidden_states, " n p d -> (n p) d")
+
+        residual = None
+        hidden_states = hidden_states[shift]
+        hidden_states = rearrange(hidden_states, " (n p) d -> n p d", p = patch_size)
+        hidden_states, residual = self.block_1(hidden_states,residual)
+        hidden_states = (hidden_states + residual) if residual is not None else hidden_states
+        hidden_states = self.norm_f_1(hidden_states.to(dtype=self.norm_f_1.weight.dtype))
+        hidden_states = rearrange(hidden_states, " n p d -> (n p) d")
+        hidden_states = hidden_states[shift_back]
+
+        return hidden_states    
+
+
+class PointSIS(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.order = [config.order] if isinstance(config.order, str) else config.order
+        self.shuffle_orders = config.shuffle_orders
+        self.patch_size = config.num_group
+        self.config = config
+        self.feature_embedding = nn.Linear(3, config.d_model)
+        self.swin_layers = nn.ModuleList([SwinMixers(config) for i in range(len(self.order))])
+        #self.mixers = SwinMixers(config)
+
+    def forward(self, data_dict):
+        pc = PointCloud(data_dict)
+        pc.serialization(order=self.order, shuffle_orders=self.shuffle_orders)
+        pad, unpad, shift, shift_back = pc.get_padding_and_inverse(self.patch_size)
+        f = pc.coord
+        print(f.shape)
+        f = self.feature_embedding(f)
+        for i , block in enumerate(self.swin_layers):
+            order_pad = pc.serialized_order[i][pad]
+            f = f[order_pad]  
+            f = block(f, shift, shift_back, self.patch_size)
+            f = f[unpad]
+
+        return f

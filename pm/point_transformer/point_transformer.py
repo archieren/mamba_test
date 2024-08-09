@@ -152,9 +152,9 @@ class SerializedAttention(PointModule):
 
         # padding and reshape feat and batch for serialized point patch
         qkv = self.qkv(point.feat)[order]
-
         if not self.enable_flash:
             # encode and reshape qkv: (N', K, 3, H, C') => (3, N', H, K, C')
+            print(f"@@@@@@@@@@{qkv.shape}")
             q, k, v = (
                 qkv.reshape(-1, K, 3, H, C // H).permute(2, 0, 3, 1, 4).unbind(dim=0)
             )

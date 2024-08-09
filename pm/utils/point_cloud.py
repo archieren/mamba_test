@@ -42,7 +42,7 @@ class PointCloud(Dict):
             self.offset = batch2offset(self.batch)
         # 
 
-    def serialization(self, order={"hilbert", "hilbert-trans"}, depth=None, shuffle_orders=True):
+    def serialization(self, order={"hilbert", "hilbert-trans"}, depth=None, shuffle_orders=False):
         """
         Point Cloud Serialization
 
@@ -109,8 +109,46 @@ class PointCloud(Dict):
         self.serialized_order = order
         self.serialized_inverse = inverse
 
-    # def grouping(self, num_group:int, group_size:int):
-    #     self.s_idx, self.s_n, self.s_xyz, self.s_order, self.s_inverse = group_by_count(self, num_group, group_size)
+    def get_padding_and_inverse(self, patch_size=1024):
+        """
+        必须在序列化后作！
+        TODO :有些条件检测，先暂不考虑！
+        返回结果：
+            得到多个索引！
+        """
+        offset = self.offset                 # [N0, N0+N1,......]
+        batches = len(offset)
+        batch_bin = offset2bincount(offset)  # [N0, N1,......] 
+        batch_pad_bin = (torch.div(batch_bin + patch_size - 1,patch_size,rounding_mode="trunc")* patch_size) # [N0+P0, N1+P1,......]
+
+        # only pad point when num of points larger than patch_size # TODO， 我假设这种情况不出现！
+        _offset = nn.functional.pad(offset, (1, 0))  # [0, N0, N0+N1,......]
+        
+        offset_pad = torch.cumsum(batch_pad_bin, dim=0) #  [N0+P0, N0+P0+N1+P1,......]
+        _offset_pad = nn.functional.pad(offset_pad, (1, 0)) # [0,N0+P0, N0+P0+N1+P1,......]
+        
+        pad = torch.arange(_offset_pad[-1], device=offset.device) # [0,1,2,..., N0+P0-1, N0+P0,..., N0+P0+N1+P1-1]
+        unpad = torch.arange(_offset[-1], device=offset.device)   # [0,1,2,..., N0+N1-1]
+        # 要调整pad 和 unpad里面的值！！！
+        for i in range(batches):
+            Ps = _offset_pad[i] - _offset[i]   #  Ps == ΣPj (j < i)
+            unpad[_offset[i] : _offset[i + 1]] += Ps
+            if batch_bin[i] != batch_pad_bin[i]:   # ? Pi>0
+                remainder = (batch_bin[i] % patch_size)
+                t_ = _offset_pad[i + 1] - patch_size + remainder
+                s_ = _offset_pad[i + 1] - 2 * patch_size + remainder
+                pad[ t_: _offset_pad[i + 1]] = pad[s_: _offset_pad[i + 1] - patch_size]
+            pad[_offset_pad[i] : _offset_pad[i + 1]] -= Ps
+
+        pad_shift =torch.arange(_offset_pad[-1], device=offset.device)
+        pad_shift_back = torch.arange(_offset_pad[-1], device=offset.device)
+        for i in range(batches):
+            temp = pad_shift[_offset_pad[i]:_offset_pad[i+1]]
+            pad_shift[_offset_pad[i]:_offset_pad[i+1]] = temp.roll(int(patch_size/2))
+            temp = pad_shift_back[_offset_pad[i]:_offset_pad[i+1]]
+            pad_shift_back[_offset_pad[i]:_offset_pad[i+1]] = temp.roll(int(-patch_size/2))        
+        # 注意： pad - pad[pad_shift][pad_shift_back] == 0
+        return pad, unpad, pad_shift, pad_shift_back
 
 
     def sparsify(self, pad=96):

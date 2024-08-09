@@ -1,7 +1,7 @@
 import os,sys
 sys.path.append(os.getcwd()) # 先这样!!!
 os.environ["TORCH_CUDA_ARCH_LIST"] = "6.0;6.1;6.2"
-import time
+import random,time
 from addict import Dict
 import numpy as np
 import open3d as o3d
@@ -16,6 +16,10 @@ from pm.pointmamba import group_by_fps_knn
 
 device='cuda'
 torch.device(device)
+
+torch.manual_seed(0)
+random.seed(0)
+np.random.seed(0)
 
 def time_it(start_time):
     stop_time = time.time()
@@ -215,16 +219,15 @@ def test_point_transformer():
     pc = model(dc)
     print(pc.keys())
 
-    with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
-        with profiler.record_function("model_forward"):
-            print("hello")
-            output = model(dc)
-            loss = output.sparse_conv_feat.features.sum()
-        with profiler.record_function("model_backward"):
-            loss.backward()
-    print(prof.key_averages().table(sort_by="cuda_time_total",row_limit=10))
-    print(f"Peak CUDA Memory Usage: {prof.total_average().cuda_memory_usage / (1024 ** 2)} MB")
-
+    # with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
+    #     with profiler.record_function("model_forward"):
+    #         print("hello")
+    #         output = model(dc)
+    #         loss = output.sparse_conv_feat.features.sum()
+    #     with profiler.record_function("model_backward"):
+    #         loss.backward()
+    # print(prof.key_averages().table(sort_by="cuda_time_total",row_limit=10))
+    # print(f"Peak CUDA Memory Usage: {prof.total_average().cuda_memory_usage / (1024 ** 2)} MB")
 
 def test_point_sis():
     import torch.autograd.profiler as profiler
@@ -235,7 +238,20 @@ def test_point_sis():
     from pm.pointmamba import PointSIS, make_default_config
     config = make_default_config()
     model =PointSIS(config).to(device)
-    dc = make_data_dict()
+    dc = make_data_dict(upper_stl_path="./assets/124_upper.stl",lower_stl_path="./assets/124_lower.stl")
+    sn = model(dc)
+    print(sn.shape)
+
+def test_point_sis_FollowMLP():
+    import torch.autograd.profiler as profiler
+
+    from pathlib import Path
+    from torch.utils.cpp_extension import CUDA_HOME
+
+    from pm.pointmamba import PointSIS_FollowMLP, make_default_config
+    config = make_default_config()
+    model =PointSIS_FollowMLP(config).to(device)
+    dc = make_data_dict(upper_stl_path="./assets/124_upper.stl",lower_stl_path="./assets/124_lower.stl")
     sn = model(dc)
     print(sn.shape)
     # with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
@@ -254,91 +270,87 @@ def test_patch():
     import torch.nn as nn
     from pm.utils.misc import offset2bincount
 
-    def get_padding_and_inverse( point):
-        pad_key = "pad"
-        unpad_key = "unpad"
-        cu_seqlens_key = "cu_seqlens_key"
-        patch_size = 1024
-        if (
-            pad_key not in point.keys()
-            or unpad_key not in point.keys()
-            or cu_seqlens_key not in point.keys()
-        ):
-            offset = point.offset
-            bincount = offset2bincount(offset)
-            bincount_pad = (
-                torch.div(
-                    bincount + patch_size - 1,
-                    patch_size,
-                    rounding_mode="trunc",
-                )
-                * patch_size
-            )
-            # only pad point when num of points larger than patch_size
-            mask_pad = bincount > patch_size
-            bincount_pad = ~mask_pad * bincount + mask_pad * bincount_pad
-            _offset = nn.functional.pad(offset, (1, 0))
-            _offset_pad = nn.functional.pad(torch.cumsum(bincount_pad, dim=0), (1, 0))
-            pad = torch.arange(_offset_pad[-1], device=offset.device)
-            unpad = torch.arange(_offset[-1], device=offset.device)
-            cu_seqlens = []
-            for i in range(len(offset)):
-                p_ = _offset_pad[i] - _offset[i]
-                unpad[_offset[i] : _offset[i + 1]] += p_
-                if bincount[i] != bincount_pad[i]:
-                    pad[
-                        _offset_pad[i + 1]
-                        - patch_size
-                        + (bincount[i] % patch_size) : _offset_pad[i + 1]
-                    ] = pad[
-                        _offset_pad[i + 1]
-                        - 2 * patch_size
-                        + (bincount[i] % patch_size) : _offset_pad[i + 1]
-                        - patch_size
-                    ]
-                pad[_offset_pad[i] : _offset_pad[i + 1]] -= p_
-
-                cu_seqlens.append(
-                    torch.arange(
-                        _offset_pad[i],
-                        _offset_pad[i + 1],
-                        step=patch_size,
-                        dtype=torch.int32,
-                        device=offset.device,
-                    )
-                )
-            point[pad_key] = pad
-            point[unpad_key] = unpad
-            point[cu_seqlens_key] = nn.functional.pad(
-                torch.concat(cu_seqlens), (0, 1), value=_offset_pad[-1]
-            )
-        return point[pad_key], point[unpad_key], point[cu_seqlens_key]
-
     pc = make_PointCloud(upper_stl_path="./assets/124_upper.stl",lower_stl_path="./assets/124_lower.stl")
     pc.serialization(depth=16,order={"z","z-trans","hilbert","hilbert-trans"},shuffle_orders=False)
     pc.sparsify()
 
-    a = 0
-    b = 2**16
-    l = 1024
-    print(pc.serialized_order.shape)
-    print(pc.serialized_order[2,a])
-    print(pc.serialized_order[2,b])
-    vertices_a = pc.coord[pc.serialized_order[3, a:a+l]].cpu()
-    vertices_b = pc.coord[pc.serialized_order[3, b:b+l]].cpu()
-    pointSet_a = o3d.geometry.PointCloud()
-    pointSet_a.points = o3d.utility.Vector3dVector(vertices_a)
-    pointSet_a.paint_uniform_color([1,0.75,0])
-    pointSet_b = o3d.geometry.PointCloud()
-    pointSet_b.points = o3d.utility.Vector3dVector(vertices_b)
-    pointSet_b.paint_uniform_color([0,0.75,1])
+    def draw(pc:PointCloud):
+        a = 0
+        b = 2**15
+        c = 2**16
+        l = 2**9
+        print(pc.serialized_order.shape)
+        print(pc.serialized_order[2,a])
+        print(pc.serialized_order[2,b])
+        print(pc.serialized_order[2,c])
+        vertices_a = pc.coord[pc.serialized_order[2, a:a+l]].cpu()
+        vertices_b = pc.coord[pc.serialized_order[2, b:b+l]].cpu()
+        vertices_c = pc.coord[pc.serialized_order[2, c:c+l]].cpu()
+        pointSet_a = o3d.geometry.PointCloud()
+        pointSet_a.points = o3d.utility.Vector3dVector(vertices_a)
+        pointSet_a.paint_uniform_color([1,0.75,0])
+        pointSet_b = o3d.geometry.PointCloud()
+        pointSet_b.points = o3d.utility.Vector3dVector(vertices_b)
+        pointSet_b.paint_uniform_color([0,0.75,1])
+        pointSet_c = o3d.geometry.PointCloud()
+        pointSet_c.points = o3d.utility.Vector3dVector(vertices_c)
+        pointSet_c.paint_uniform_color([0.75,1, 0])
 
-    upper_mesh = read_mesh(file_path="./assets/124_upper.stl")
-    o3d.visualization.draw_geometries([ pointSet_a,  upper_mesh]) #pointSet_b,
-    # x, y, z = get_padding_and_inverse(pc)
-    # print(x.shape, y.shape,z.shape)
-    # print(z)
+        upper_mesh = read_mesh(file_path="./assets/124_upper.stl")
+        o3d.visualization.draw_geometries([ pointSet_a, pointSet_b, pointSet_c, upper_mesh]) #
+    
+    #draw(pc)
 
+    start_time = time.time()
+    pad,unpad, pad_shift, pad_shift_back=pc.get_padding_and_inverse()
+    time_it(start_time)
+    print(pad.shape, unpad.shape, pad_shift.shape, pad_shift_back.shape)
+    #print(pad[:10], unpad[:10], pad_shift[:10], pad_shift_back[:10])
+
+
+
+def test_serializedpooling():
+    # ？？？
+    pc = make_PointCloud(upper_stl_path="./assets/124_upper.stl",lower_stl_path="./assets/124_lower.stl")
+    pc.serialization(depth=16,order={"z","z-trans","hilbert","hilbert-trans"},shuffle_orders=False)
+    pc.sparsify()
+
+    pooling_depth = 12
+    code = pc.serialized_code >> pooling_depth * 3     # 按序列码分组？
+    print("code[0]\n", code[0].shape)
+    code_, inverse_indices, counts = torch.unique(
+            code[0],   #这儿，让人不懂了！！！
+            sorted=True,
+            return_inverse=True,
+            return_counts=True,
+        )
+    print(f"code_\n {code_}")
+    print(f"inverse_indices\n {code[0]-code_[inverse_indices]}")   # ?batch  Assert code[0] == code_[inverse_indices]
+    print("counts\n",counts)    #?batch_bin
+    see_, indices = torch.sort(inverse_indices)  # 这个为什么要排序？
+    print("see_\n",see_)
+    print("see_\n",see_- inverse_indices[indices])  # Assert see_ == inverse_indices[indices]
+    print("indices\n", indices)
+    # index pointer for sorted point, for torch_scatter.segment_csr
+    idx_ptr = torch.cat([counts.new_zeros(1), torch.cumsum(counts, dim=0)])
+    print("idx_ptr",idx_ptr)
+    # head_indices of each cluster, for reduce attr e.g. code, batch
+    head_indices = indices[idx_ptr[:-1]]
+    print("head_indices\n",head_indices)
+    # generate down code, order, inverse
+    code = code[:, head_indices]
+    print("code\n",code)
+    order = torch.argsort(code)
+    print("order",order)
+    inverse = torch.zeros_like(order).scatter_(
+        dim=1,
+        index=order,
+        src=torch.arange(0, code.shape[1], device=order.device).repeat(
+            code.shape[0], 1
+        ),
+    )
+    print("inverse\n",inverse)
+    
 # test_PointCloud()
 # test_grouping_by_fps()
 # test_fps_pointnet2()
@@ -347,5 +359,8 @@ def test_patch():
 
 # test_point_transformer()
 # test_point_sis()
-for i in range(5):
-    test_patch()
+test_point_sis_FollowMLP()
+# test_patch()
+# test_serializedpooling()
+
+input()
