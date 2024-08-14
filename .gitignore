@@ -2,3 +2,4 @@
 **/*.npz
 **/*.pyc
 old_tests/
+log/

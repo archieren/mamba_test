@@ -58,14 +58,30 @@ def make_data_dict(upper_stl_path, lower_stl_path):
     mesh_upper : o3d.t.geometry.TriangleMesh = read_mesh(upper_stl_path)
     # dtype=torch.float是必要的!!!
     points_lower = torch.asarray(np.asarray(mesh_lower.vertices),device=device, dtype=torch.float)
+    points_lower = points_lower - torch.mean(points_lower)
     normals_lower = torch.asarray(np.asarray(mesh_lower.vertex_normals), device=device, dtype=torch.float) 
 
     points_upper = torch.asarray(np.asarray(mesh_upper.vertices), device=device, dtype=torch.float)
+    points_upper = points_upper - torch.mean(points_upper)
     normals_upper = torch.asarray(np.asarray(mesh_upper.vertex_normals), device=device,dtype=torch.float) 
 
     points = torch.cat([points_upper, points_lower])
     normals = torch.cat([normals_upper, normals_lower])
     offset = torch.tensor([points_upper.shape[0],points_lower.shape[0]], device=device).cumsum(0).int() # cumsum就成了浮点数了!
+    data = Dict(coord=points,feat=normals, offset=offset, grid_size=1.0e-2)
+    return data
+
+def make_data_dict_(upper_stl_path):
+    # 熟悉一下数据的处理!!!
+    mesh_upper : o3d.t.geometry.TriangleMesh = read_mesh(upper_stl_path)
+    # dtype=torch.float是必要的!!!
+    points_upper = torch.asarray(np.asarray(mesh_upper.vertices), device=device, dtype=torch.float)
+    points_upper = points_upper - torch.mean(points_upper)
+    normals_upper = torch.asarray(np.asarray(mesh_upper.vertex_normals), device=device,dtype=torch.float) 
+
+    points = points_upper
+    normals = normals_upper
+    offset = torch.tensor([points_upper.shape[0]], device=device).cumsum(0).int() # cumsum就成了浮点数了!
     data = Dict(coord=points,feat=normals, offset=offset, grid_size=1.0e-2)
     return data
 
@@ -235,11 +251,14 @@ def test_point_sis():
     from pathlib import Path
     from torch.utils.cpp_extension import CUDA_HOME
 
-    from pm.pointmamba import PointSIS, make_default_config
+    from pm.pointmamba import PointSIS_SEG, make_default_config
     config = make_default_config()
-    model =PointSIS(config).to(device)
-    dc = make_data_dict(upper_stl_path="./assets/124_upper.stl",lower_stl_path="./assets/124_lower.stl")
-    sn = model(dc)
+    model =PointSIS_SEG(config).to(device)
+    #dc = make_data_dict(upper_stl_path="./assets/124_upper.stl",lower_stl_path="./assets/124_lower.stl")
+    dc = make_data_dict_(upper_stl_path="./assets/124_upper.stl")
+    start_time = time.time()
+    sn = model(PointCloud(dc))
+    time_it(start_time)
     print(sn.shape)
 
 def test_point_sis_FollowMLP():
@@ -252,7 +271,9 @@ def test_point_sis_FollowMLP():
     config = make_default_config()
     model =PointSIS_FollowMLP(config).to(device)
     dc = make_data_dict(upper_stl_path="./assets/124_upper.stl",lower_stl_path="./assets/124_lower.stl")
+    start_time = time.time()
     sn = model(dc)
+    time_it(start_time)
     print(sn.shape)
     # with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
     #   with profiler.record_function("model_forward"):
@@ -262,8 +283,7 @@ def test_point_sis_FollowMLP():
     #       loss.backward()
     # print(prof.key_averages().table(sort_by="cuda_time_total",row_limit=10))
     # print(f"Peak CUDA Memory Usage: {prof.total_average().cuda_memory_usage / (1024 ** 2)} MB")
-    
-    input()
+
 
 
 def test_patch():
@@ -315,7 +335,7 @@ def test_serializedpooling():
     pc.serialization(depth=16,order={"z","z-trans","hilbert","hilbert-trans"},shuffle_orders=False)
     pc.sparsify()
 
-    pooling_depth = 12
+    pooling_depth = 2
     code = pc.serialized_code >> pooling_depth * 3     # 按序列码分组？
     print("code[0]\n", code[0].shape)
     code_, inverse_indices, counts = torch.unique(
@@ -354,12 +374,12 @@ def test_serializedpooling():
 # test_PointCloud()
 # test_grouping_by_fps()
 # test_fps_pointnet2()
-# test_pointmlp()
+test_pointmlp()
 # test_curvenet()
 
 # test_point_transformer()
 # test_point_sis()
-test_point_sis_FollowMLP()
+# test_point_sis_FollowMLP()
 # test_patch()
 # test_serializedpooling()
 
