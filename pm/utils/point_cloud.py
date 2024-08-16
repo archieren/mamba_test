@@ -190,7 +190,7 @@ class PointCloud(Dict):
         self["sparse_shape"] = sparse_shape
         self["sparse_conv_feat"] = sparse_conv_feat
 
-# @torch.inference_mode()
+# @torch.no_grad()
 # def group_by_ratio(xyz_pc:PointCloud, group_size:int, ratio=0.1):  # 这个应当弃用,效率不高!!!!!!
 #     '''
 #         input: 
@@ -207,3 +207,70 @@ class PointCloud(Dict):
 #     patch_idx = patch_idx[1].reshape((-1,group_size))
 
 #     return patch_idx, samples_idx
+
+
+@torch.no_grad()
+def group_by_fps_knn(xyz_pc:PointCloud, 
+                   num_group:int,  # 分多少个组                  # 其实取多少点！
+                   group_size:int, # 组内多少个元素
+                   ): 
+    # 不得不面临将点云都搞成传统的Batch模式!
+    # 序列分段的方式,是另一思路.先不考虑!
+    # 假设xyx_pc已经serialized!
+    # 这个地方很花了点时间.基本功不牢呀! index broadcasting 和 scatter_, gather的关系!
+    from pointops import knn_query as knn
+    from pointops import farthest_point_sampling as fps
+    
+    # pointops方式 :按量,返回结果还包括距离
+    # s_ 解读为 samples, n_ 解读为neighbors, o_解读为ordered.
+    # batch_size = xyz_pc.batch[-1] + 1
+    s_offset = (torch.ones_like( xyz_pc.batch_bin)* num_group).cumsum(0).int() #[batch_size]
+    s_idx = fps(xyz_pc.coord, xyz_pc.offset, s_offset)  # [batch_size*num_group ]  # 幸亏这个fps
+
+    # 此时 还不用考虑mesh提供的norm作为特征的提取基础，直接用坐标和临域关系来构造特征！
+    s_xyz  = xyz_pc.coord[s_idx]                                                     # [batch_size*num_group, coord's dim]
+    s_n_idx, _dist = knn(group_size, xyz_pc.coord, xyz_pc.offset, s_xyz,s_offset)    ## [batch_size*num_group, group_size ], _
+    s_n = xyz_pc.coord[s_n_idx]                                                      # [batch_size*num_group , group_size, coord's dim]
+    s_n = s_n - s_xyz.unsqueeze(1)                                                   # [batch_size*num_group , group_size, vector's dim]
+    s_n = s_n[:,1:, :]                                                               # 需不需要,去掉组内第一个vector? 
+    
+    #排序,根据原有的SFC遍历序好,获得采样点的各总次序!
+    s_order = torch.argsort(xyz_pc.serialized_code[:, s_idx])                                           # 获得样本的各种序列吗, 种类排序! [order_s, batch_size * num_group]
+    src=torch.arange(0, s_order.shape[1], device=s_order.device).repeat(s_order.shape[0], 1)
+    s_inverse = torch.zeros_like(s_order, device=s_order.device).scatter_(dim=1,index=s_order,src=src,) # [order_s, batch_size * num_group]
+    # assert s_inverse[0, s_order[0, i]] == i
+    # s_idx[s_order].gather(1, s_inverse)- s_idx 等于零矩阵!!! 注意这个关系!!!
+
+    # s_o_xyz = s_xyz[s_order]      # [order_s, batch_size * num_group , coord's dim]
+    # s_o_n = s_n[s_order]          # [order_s, batch_size * num_group , group_size, coord's dim]
+    # return s_o_n, s_o_xyz, s_idx, s_xyz, s_order, s_inverse
+
+    # s_idx是样本和数据之间的对应桥梁!!!
+    return s_idx, s_n, s_xyz, s_order, s_inverse
+
+@torch.no_grad()
+def group_by_fps_knn_(parent_pc:PointCloud, 
+                   num_group:int,  # 分多少个组                  # 其实取多少点！
+                   group_size:int, # 组内多少个元素
+                   ): 
+    from pointops import knn_query as knn
+    from pointops import farthest_point_sampling as fps
+    # pointops方式 :按量,返回结果还包括距离
+    # s_ 解读为 samples, n_ 解读为neighbors, o_解读为ordered.
+    # batch_size = parent_pc.batch[-1] + 1
+    s_offset = (torch.ones_like( parent_pc.batch_bin)* num_group).cumsum(0).int() #[batch_size]
+    s_idx = fps(parent_pc.coord, parent_pc.offset, s_offset)  # [batch_size*num_group ]  # 幸亏这个fps
+
+    # 此时 还不用考虑mesh提供的norm作为特征的提取基础，直接用坐标和临域关系来构造特征！
+    s_xyz  = parent_pc.coord[s_idx]                                                        # [batch_size*num_group, coord's dim]
+    s_n_idx, _dist = knn(group_size, parent_pc.coord, parent_pc.offset, s_xyz,s_offset)    # [batch_size*num_group, group_size ], _
+    s_n = parent_pc.coord[s_n_idx]                                                         # [batch_size*num_group, group_size, coord's dim]
+    s_n = s_n - s_xyz.unsqueeze(1)                                                         # [batch_size*num_group, group_size, vector's dim]
+    #s_n = s_n[:,1:, :]                                                                    # TODO: 需不需要,去掉组内第一个vector? 
+    
+    s_data = Dict(coord=s_xyz, 
+                  feat=s_n,
+                  offset=s_offset,
+                  grid_size=parent_pc.grid_size,                                            # 用父点云的grid_size
+                  index_back_to_parent=s_idx)                                               # 用于构造一个新的点集！
+    return PointCloud(s_data)

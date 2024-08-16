@@ -84,7 +84,7 @@ class SwinMixers(nn.Module):        # 这儿，对Patch，进行飘移操作，�
     """
     def __init__(self, config):
         super().__init__()
-        self.out_indices = config.out_indices
+        self.cascade = config.cascade
         self.block_0 = self.create_block(config.d_model, config.mamba_config, 0)
         self.block_1 = self.create_block(config.d_model, config.mamba_config, 0)  # shift
         self.norm_f_0 = nn.LayerNorm(config.d_model)
@@ -103,7 +103,7 @@ class SwinMixers(nn.Module):        # 这儿，对Patch，进行飘移操作，�
         # block.layer_idx = layer_idx
         return block
     
-    def forward(self, hidden_states,shift,shift_back, patch_size): # 目前是串联， 可以尝试并联的方式！
+    def forward(self, hidden_states,shift,shift_back, patch_size):  
         # 0
         residual = None
         hidden_states_0 = hidden_states
@@ -114,8 +114,11 @@ class SwinMixers(nn.Module):        # 这儿，对Patch，进行飘移操作，�
         hidden_states_0 = self.norm_f_0(hidden_states_0.to(dtype=self.norm_f_0.weight.dtype)) #TODO
         hidden_states_0 = rearrange(hidden_states_0, " n p d -> (n p) d")
         # 1
-        residual = None 
-        hidden_states_1 = hidden_states[shift]  
+        residual = None
+        if not self.cascade: # 并联
+            hidden_states_1 = hidden_states[shift]
+        else:  # 串联
+            hidden_states_1 = hidden_states_0[shift]    # 
 
         hidden_states_1 = rearrange(hidden_states_1, " (n p) d -> n p d", p = patch_size)
         hidden_states_1, residual = self.block_1(hidden_states_1,residual)
@@ -123,10 +126,12 @@ class SwinMixers(nn.Module):        # 这儿，对Patch，进行飘移操作，�
         hidden_states_1 = self.norm_f_1(hidden_states_1.to(dtype=self.norm_f_1.weight.dtype)) #TODO
         hidden_states_1 = rearrange(hidden_states_1, " n p d -> (n p) d")
         hidden_states_1 = hidden_states_1[shift_back]
-        # merge
-        hidden_states = torch.cat([hidden_states_0, hidden_states_1], dim=-1)
-        hidden_states = self.merge(hidden_states)
-        hidden_states = self.norm_f(hidden_states.to(self.norm_f.weight.dtype))
+        if not self.cascade: # 并联
+            hidden_states = torch.cat([hidden_states_0, hidden_states_1], dim=-1)
+            hidden_states = self.merge(hidden_states)
+            hidden_states = self.norm_f(hidden_states.to(self.norm_f.weight.dtype))
+        else: # 串联
+            hidden_states = hidden_states_1
 
         return hidden_states    
 
@@ -135,6 +140,7 @@ class PointSIS(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.order = [config.order] if isinstance(config.order, str) else config.order
+        self.repeats = config.repeats
         self.shuffle_orders = config.shuffle_orders
         self.patch_size = config.patch_size
         self.config = config
@@ -142,7 +148,7 @@ class PointSIS(nn.Module):
         self.feature_embedding =  MLP(3, config.d_model, config.d_model)
         self.pos_embedding =  MLP(3, config.d_model, config.d_model)
         self.tokening = nn.Linear(config.d_model*2, config.d_model)
-        self.swin_layers = nn.ModuleList([SwinMixers(config) for i in range(len(self.order))])
+        self.swin_layers = nn.ModuleList([SwinMixers(config) for i in range(len(self.order)*self.repeats)])  # 2*4*3,
 
 
     def forward(self, pc:PointCloud):
@@ -153,13 +159,15 @@ class PointSIS(nn.Module):
         pos  = self.pos_embedding(pc.coord)
         f = feat
         for i , block in enumerate(self.swin_layers):
-            f = torch.cat([f, pos], dim=-1)           # TODO: 这也是一种策略，每层都将POS加上，而不是只在开始的时候！
-            f = self.tokening(f)
-            f = f[pc.serialized_order[i]]
+            the_order = i % (len(self.order))
+            if the_order==0:
+                f = torch.cat([f, pos], dim=-1)           # TODO: 这也是一种策略，每轮重复前都将POS加上，而不是只在开始的时候！
+                f = self.tokening(f)
+            f = f[pc.serialized_order[the_order]]
             f = f[pad]
             f = block(f, shift, shift_back, self.patch_size)
             f = f[unpad]
-            f = f[pc.serialized_inverse[i]]
+            f = f[pc.serialized_inverse[the_order]]
         return f
 
     

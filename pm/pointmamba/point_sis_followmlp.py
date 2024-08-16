@@ -4,84 +4,40 @@ from functools import partial
 import torch
 import torch_scatter
 import torch.nn as nn
+
+from addict import Dict
 from torch import Tensor
 from einops import rearrange
-
 from pm.utils.misc import offset2batch,batch2offset
-
 from mamba_ssm.modules.mamba_simple import Mamba
 
 # 直接使用mamba推荐的Block, 不像Point Mamba抄过来! 
 # 这需要看片文章"On Layer Normalization in the Transformer Architecture"
 from mamba_ssm.modules.block import Block 
+from pm.utils.point_cloud import PointCloud, group_by_fps_knn_
 
-from pm.utils.point_cloud import PointCloud
-"""
-用Mamba来处理点云,目前看到的, 有下面的几项工作:
-1) PointMamba:这哥们(好像还是Baidu的!!!).到第四版,参考了PTV3的结构化思路后,按他自己的说法,又跑到PCM,Mamba3D的前头.
-2) Point Cloud Mamba:从PointMLP出发的Mamba
-3) Mamba3D: 说他的Local Norm Pooling(LNP)是相较PointMamba的优点!
-4) Serialized Point Mamba: 感觉在灌水！是个组合体。PTv3+PointMamba
-5) PoinTramba:
-6) Point Mamba:(上海交大的) 走的是OctTree的序列化路线！
+class MLP(nn.Module):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        hidden_channels,
+        act_layer=nn.GELU,
+        drop=0.0,
+    ):
+        super().__init__()
+        self.fc1 = nn.Linear(in_channels, hidden_channels)
+        self.act = act_layer()
+        self.fc2 = nn.Linear(hidden_channels, out_channels)
+        self.drop = nn.Dropout(drop)
 
-另外Point Transformer V3的工作值得注意(尽管他是在Transformer上的工作.)!
-尺度和结构化,是他想解决的问题! 
-1)各种点云的尺度,跨度很大!
-2)点云是不规则数据集
-3)放弃点集和空间逼近的思路(KNN), 用SFC方法,来结构化点云!(可能这个会影响一批模型)
-  再结合Swin的做法，逐步扩大RF，可以处理很长的序列！！
-理解：(寻求一个合理的点云遍历方法，反而放到重要的位置！)
-
-另外的一条路线：TSegFormer
-
-在Voxel影像上,还看到以下几项工作:
-1)SegMamba
-2)Voxel Mamba
-3)nnMamba
-
-
-我这里的缩写,来之传说"Space Is a latent Sequence".
-"""
-
-@torch.no_grad()
-def group_by_fps_knn(xyz_pc:PointCloud, 
-                   num_group:int,  # 分多少个组                  # 其实取多少点！
-                   group_size:int, # 组内多少个元素
-                   ): 
-    # 不得不面临将点云都搞成传统的Batch模式!
-    # 序列分段的方式,是另一思路.先不考虑!
-    # 假设xyx_pc已经serialized!
-    # 这个地方很花了点时间.基本功不牢呀! index broadcasting 和 scatter_, gather的关系!
-    from pointops import knn_query as knn
-    from pointops import farthest_point_sampling as fps
-    
-    # pointops方式 :按量,返回结果还包括距离
-    # s_ 解读为 samples, n_ 解读为neighbors, o_解读为ordered.
-    # batch_size = xyz_pc.batch[-1] + 1
-    s_offset = (torch.ones_like( xyz_pc.batch_bin)* num_group).cumsum(0).int() #[batch_size]
-    s_idx = fps(xyz_pc.coord, xyz_pc.offset, s_offset)  # [batch_size*num_group ]  # 幸亏这个fps
-
-    # 此时 还不用考虑mesh提供的norm作为特征的提取基础，直接用坐标和临域关系来构造特征！
-    s_xyz  = xyz_pc.coord[s_idx]                                                     # [batch_size*num_group, coord's dim]
-    s_n_idx, _dist = knn(group_size, xyz_pc.coord, xyz_pc.offset, s_xyz,s_offset)    ## [batch_size*num_group, group_size ], _
-    s_n = xyz_pc.coord[s_n_idx]                                                      # [batch_size*num_group , group_size, coord's dim]
-    s_n = s_n - s_xyz.unsqueeze(1)                                                   # [batch_size*num_group , group_size, vector's dim]
-    s_n = s_n[:,1:, :]                                                               # 需不需要,去掉组内第一个vector? 
-    
-    #排序,根据原有的SFC遍历序好,获得采样点的各总次序!
-    s_order = torch.argsort(xyz_pc.serialized_code[:, s_idx])                                           # 获得样本的各种序列吗, 种类排序! [order_s, batch_size * num_group]
-    src=torch.arange(0, s_order.shape[1], device=s_order.device).repeat(s_order.shape[0], 1)
-    s_inverse = torch.zeros_like(s_order, device=s_order.device).scatter_(dim=1,index=s_order,src=src,) # [order_s, batch_size * num_group]
-    # assert s_inverse[0, s_order[0, i]] == i
-    # s_idx[s_order].gather(1, s_inverse)- s_idx 等于零矩阵!!! 注意这个关系!!!
-
-    # s_o_xyz = s_xyz[s_order]      # [order_s, batch_size * num_group , coord's dim]
-    # s_o_n = s_n[s_order]          # [order_s, batch_size * num_group , group_size, coord's dim]
-    # return s_o_n, s_o_xyz, s_idx, s_xyz, s_order, s_inverse
-
-    # s_idx是样本和数据之间的对应桥梁!!!
-    return s_idx, s_n, s_xyz, s_order, s_inverse
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.drop(x)
+        x = self.fc2(x)
+        x = self.drop(x)
+        return x
 
 class Grouper(nn.Module):
     def __init__(self, num_group, group_size):
@@ -90,7 +46,7 @@ class Grouper(nn.Module):
         self.group_size = group_size
     
     def forward(self, pc:PointCloud):
-        return group_by_fps_knn(pc, self.num_group, self.group_size)
+        return group_by_fps_knn_(pc, self.num_group, self.group_size)
 
 class Feature_Encoder(nn.Module):        # 改自Point Mamba！
     def __init__(self, encoder_channel):
@@ -221,18 +177,25 @@ class PointSIS_FollowMLP(nn.Module):
         )
 
     def forward(self, data_dict):
-        point = PointCloud(data_dict)
-        point.serialization(order=self.order, shuffle_orders=self.shuffle_orders)
-        b_s = point.batch[-1]+1
-        o_s = len(self.order)
-        s_idx, s_n, s_xyz, s_order, s_inverse = self.grouper(point)        
+        parent_point = PointCloud(data_dict)
+        # parent_point.serialization(order=self.order, shuffle_orders=self.shuffle_orders)  # 父点集，就没必要序列化了！
+        #s_idx, s_n, s_xyz, s_order, s_inverse = self.grouper(parent_point)
+        s_point = self.grouper(parent_point)
+        s_point.serialization(order=self.order, shuffle_orders=self.shuffle_orders)
+        s_feat  = s_point.feat 
+        s_coord = s_point.coord 
+        s_order = s_point.serialized_order 
+        s_inverse = s_point.serialized_inverse        
+        
+        b_s = s_point.batch[-1]+1
+        o_s = len(self.order)        
         # s_order, s_inverse 均为 order_size batch_size*num_group
-        s_n = self.feature_encoder(s_n)                   # => batch_size*num_group feature_size
-        s_xyz = self.pos_encoder(s_xyz)                   # => batch_size*num_group feature_size  
-        s = torch.cat([s_n, s_xyz], dim= -1)
+        s_feat = self.feature_encoder(s_feat)                   # => batch_size*num_group d_model
+        s_coord = self.pos_encoder(s_coord)                   # => batch_size*num_group d_model  
+        s = torch.cat([s_feat, s_coord], dim= -1)
         s = self.fuse_e(s)                                 # 融合各编码 => batch_size*num_group d
         s = s.unsqueeze(0).repeat(o_s,1,1)                 # 为每种排序准备排序的数据 => order_size batch_size*num_group d
-        s = torch_scatter.scatter(s,index=s_order, dim=1)  # 排序 => order_size batch_size*num_group d
+        s = torch_scatter.scatter(s,index=s_order, dim=1)  # 排序 => order_size batch_size*num_group d        
         s = rearrange(s, "o (b g) d -> b (o g) d", b=b_s)  # 将各个排序拼接,参看PointMamba的第四版!!
         s = self.mixers(s)                                 # 返回的是抽取的几个层的返回结果的列表 
         s = torch.cat(s, dim= -1)                          # 将各层mamba的结果，拼接！！

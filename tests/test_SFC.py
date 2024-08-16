@@ -10,8 +10,8 @@ import torch
 
 from pm.utils.misc import offset2batch,batch2offset
 from pm.sfc_serialization import encode
-from pm.utils.point_cloud import PointCloud
-from pm.pointmamba import group_by_fps_knn
+from pm.utils.point_cloud import PointCloud,group_by_fps_knn
+
 
 
 device='cuda'
@@ -248,6 +248,7 @@ def test_point_transformer():
 def test_point_sis():
     import torch.autograd.profiler as profiler
 
+
     from pathlib import Path
     from torch.utils.cpp_extension import CUDA_HOME
 
@@ -261,6 +262,7 @@ def test_point_sis():
     time_it(start_time)
     print(sn.shape)
 
+
 def test_point_sis_FollowMLP():
     import torch.autograd.profiler as profiler
 
@@ -270,7 +272,8 @@ def test_point_sis_FollowMLP():
     from pm.pointmamba import PointSIS_FollowMLP, make_default_config
     config = make_default_config()
     model =PointSIS_FollowMLP(config).to(device)
-    dc = make_data_dict(upper_stl_path="./assets/124_upper.stl",lower_stl_path="./assets/124_lower.stl")
+    #dc = make_data_dict_(upper_stl_path="./assets/124_upper.stl",lower_stl_path="./assets/124_lower.stl")
+    dc = make_data_dict_(upper_stl_path="./assets/124_upper.stl")
     start_time = time.time()
     sn = model(dc)
     time_it(start_time)
@@ -374,12 +377,12 @@ def test_serializedpooling():
 # test_PointCloud()
 # test_grouping_by_fps()
 # test_fps_pointnet2()
-test_pointmlp()
+# test_pointmlp()
 # test_curvenet()
 
 # test_point_transformer()
 # test_point_sis()
-# test_point_sis_FollowMLP()
+test_point_sis_FollowMLP()
 # test_patch()
 # test_serializedpooling()
 
