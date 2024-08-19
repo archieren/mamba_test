@@ -95,7 +95,8 @@ def train():
     m_config = make_default_config()
     model =PointSIS_SEG(m_config)
     if checkpoints_file.exists():
-        model.load_state_dict(torch.load(checkpoints_file))
+        ckpt = torch.load(checkpoints_file)
+        model.load_state_dict(ckpt)
         print("Load a saved model")
     
     model= model.to(device)
