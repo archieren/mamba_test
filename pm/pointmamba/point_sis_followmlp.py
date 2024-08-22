@@ -110,10 +110,11 @@ class FeatPropagation(nn.Module):
 
     def forward(self, parent_pc:PointCloud, s_pc:PointCloud): 
         xyz = s_pc.coord
-        new_xyz = parent_pc.coord        # 为什么这样， new_xyz是parent_pc.coord! 想明白这个，就明白底层算法了！
-        input = s_pc.feat
         offset = s_pc.offset
+        new_xyz = parent_pc.coord        # 为什么这样， new_xyz是parent_pc.coord! 想明白这个，就明白底层算法了！
         new_offset = parent_pc.offset
+
+        input = s_pc.feat
         output = self.interpolation(xyz, new_xyz, input, offset, new_offset, self.k)
         return output
     
