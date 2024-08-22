@@ -2,15 +2,15 @@ import os,sys
 sys.path.append(os.getcwd()) # 先这样!!!
 os.environ["TORCH_CUDA_ARCH_LIST"] = "6.0;6.1;6.2"
 import random,time
-from addict import Dict
 import numpy as np
 import open3d as o3d
-
 import torch
 
+from addict import Dict
+from pathlib import Path
 from pm.utils.misc import offset2batch,batch2offset
 from pm.sfc_serialization import encode
-from pm.utils.point_cloud import PointCloud,group_by_fps_knn
+from pm.utils.point_cloud import PointCloud,group_by_group_number,group_by_ratio
 
 
 
@@ -141,26 +141,24 @@ def test_PointCloud():
     print("About sparse_conv_feat: batch size")
     print(pc.sparse_conv_feat.batch_size)
 
-def test_grouping_by_fps():
-    ###pyg提供的工具,适合在graph上作!!!但性能真不咋地!!
+def test_grouping_by_ratio():
     pc = make_PointCloud()
     pc.serialization()
-    start_time = time.time()
-    s_idx, s_n, s_xyz, s_order, s_inverse= group_by_fps_knn(pc,4, 3) # (1024*)
-    time_it(start_time)
-    print("Samples_idx:")
-    print(s_idx.shape)
+    for i in range(3):
+        print(i)
+        start_time = time.time()
+        s_pc = group_by_ratio(pc,7, ratio=0.08) # (1024*)
+        time_it(start_time)
 
-    print(" Samples neighbor and xyz")
-    print(s_n.shape)
-    print(s_xyz.shape)
+def test_grouping_by_fps():
+    pc = make_PointCloud()
+    pc.serialization()
+    for i in range(3):
+        print(i)
+        start_time = time.time()
+        s_pc= group_by_group_number(pc,16384, 7) # (1024*)
+        time_it(start_time)
 
-    print("Different Order of samples:")
-    print(s_order)
-    print(s_idx[s_order])
-    ddd = s_idx[s_order].gather(1, s_inverse)- s_idx
-    print("ddd应当是零矩阵")
-    print(ddd)  
 
     
 def test_fps_pointnet2():
@@ -245,22 +243,36 @@ def test_point_transformer():
     # print(prof.key_averages().table(sort_by="cuda_time_total",row_limit=10))
     # print(f"Peak CUDA Memory Usage: {prof.total_average().cuda_memory_usage / (1024 ** 2)} MB")
 
+def __get_ckpt(name='model_weights.pth')-> Path:
+    #Some Dir
+    exp_dir = Path('./log/')
+    exp_dir.mkdir(exist_ok=True)
+    checkpoints_dir = exp_dir.joinpath('checkpoints/')
+    checkpoints_dir.mkdir(exist_ok=True)
+    checkpoints_file = checkpoints_dir.joinpath(name)
+    return checkpoints_file
+
 def test_point_sis():
     import torch.autograd.profiler as profiler
-
-
-    from pathlib import Path
     from torch.utils.cpp_extension import CUDA_HOME
-
     from pm.pointmamba import PointSIS_SEG, make_default_config
-    config = make_default_config()
-    model =PointSIS_SEG(config).to(device)
+
+    m_config = make_default_config()
+    checkpoints_file = __get_ckpt()
+
+    model =PointSIS_SEG(m_config)
+    if checkpoints_file.exists():
+        ckpt = torch.load(checkpoints_file)
+        model.load_state_dict(ckpt)
+        print("Load a saved model")
+    model = model.to(device)
     #dc = make_data_dict(upper_stl_path="./assets/124_upper.stl",lower_stl_path="./assets/124_lower.stl")
-    dc = make_data_dict_(upper_stl_path="./assets/124_upper.stl")
-    start_time = time.time()
-    sn = model(PointCloud(dc))
-    time_it(start_time)
-    print(sn.shape)
+    for i in range(10):
+        dc = make_data_dict_(upper_stl_path="./assets/124_upper.stl")
+        start_time = time.time()
+        sn = model(PointCloud(dc))
+        time_it(start_time)
+        print(sn.shape)
 
 
 def test_point_sis_FollowMLP():
@@ -269,15 +281,17 @@ def test_point_sis_FollowMLP():
     from pathlib import Path
     from torch.utils.cpp_extension import CUDA_HOME
 
-    from pm.pointmamba import PointSIS_FollowMLP, make_default_config
+    from pm.pointmamba import PointSISFollowmlp_SEG, make_default_config
     config = make_default_config()
-    model =PointSIS_FollowMLP(config).to(device)
+    model =PointSISFollowmlp_SEG(config).to(device)
     #dc = make_data_dict_(upper_stl_path="./assets/124_upper.stl",lower_stl_path="./assets/124_lower.stl")
     dc = make_data_dict_(upper_stl_path="./assets/124_upper.stl")
-    start_time = time.time()
-    sn = model(dc)
-    time_it(start_time)
-    print(sn.shape)
+    for i in range(10):
+        start_time = time.time()
+        pc = PointCloud(dc)
+        sn = model(pc)
+        time_it(start_time)
+        print(sn.shape)
     # with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
     #   with profiler.record_function("model_forward"):
     #       output = model(dc)
@@ -374,16 +388,33 @@ def test_serializedpooling():
     )
     print("inverse\n",inverse)
     
+def test_remote_pointsis():
+    import requests
+    http_url = 'http://106.13.35.169:8001'
+    mesh = read_mesh("./assets/124_upper.stl")
+    response = requests.get(http_url+'/v0/test')
+    res = response.json()
+    res = np.array(res["response"])
+    indx= np.nonzero(res)[0]
+    print(indx.shape)
+
+    t = o3d.geometry.PointCloud()
+    points = np.asarray(mesh.vertices)
+    points = points[indx]
+    t.points = o3d.utility.Vector3dVector(points)
+    t.paint_uniform_color([0.75,1, 0])
+    o3d.visualization.draw_geometries([ t, mesh])
 # test_PointCloud()
+# test_grouping_by_ratio()
 # test_grouping_by_fps()
 # test_fps_pointnet2()
 # test_pointmlp()
 # test_curvenet()
 
 # test_point_transformer()
-# test_point_sis()
-test_point_sis_FollowMLP()
+test_point_sis()
+# test_point_sis_FollowMLP()
 # test_patch()
 # test_serializedpooling()
-
+# test_remote_pointsis()
 input()

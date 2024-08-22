@@ -11,8 +11,9 @@ from mamba_ssm.modules.mamba_simple import Mamba
 # 直接使用mamba推荐的Block, 不像Point Mamba抄过来! 
 # 这需要看片文章"On Layer Normalization in the Transformer Architecture"
 from mamba_ssm.modules.block import Block 
+from pointops import interpolation2
 
-from pm.utils.point_cloud import PointCloud
+from pm.utils.point_cloud import PointCloud, group_by_ratio
 """
 用Mamba来处理点云,目前看到的, 有下面的几项工作:
 1) PointMamba:这哥们(好像还是Baidu的!!!).到第四版,参考了PTV3的结构化思路后,按他自己的说法,又跑到PCM,Mamba3D的前头.
@@ -135,7 +136,82 @@ class SwinMixers(nn.Module):        # 这儿，对Patch，进行飘移操作，�
 
         return hidden_states    
 
+class Grouper(nn.Module):
+    def __init__(self, group_ratio, group_size):
+        super().__init__()
+        self.group_ratio = group_ratio
+        self.group_size = group_size
+    
+    def forward(self, pc:PointCloud):
+        return group_by_ratio(pc,self.group_size, ratio= self.group_ratio)
 
+class Feature_Encoder(nn.Module):        # 改自Point Mamba！
+    def __init__(self, encoder_channel):
+        super().__init__()
+        print(encoder_channel)
+        self.e_o = encoder_channel       # 特征编码输出的通道数！
+        self.e_i = 128                   # 特征编码内部使用的通道数！
+        self.first_conv = nn.Sequential(
+            nn.Linear(3,self.e_i), 
+            nn.LayerNorm(self.e_i),
+            nn.GELU(),                       
+            nn.Linear(self.e_i, self.e_i *2)
+        )
+        self.second_conv = nn.Sequential(
+            nn.Linear(self.e_i *4, self.e_i *4),
+            nn.LayerNorm(self.e_i *4 ),
+            nn.GELU(),
+            nn.Linear(self.e_i *4, self.e_o)
+        )
+
+    def forward(self, feature):
+        '''
+            point_groups : BG N 3  ( N 邻居的数量)
+            -----------------
+            feature_global : BG C
+        '''
+        BG, N, C = feature.shape
+        # encoder                                                     # 
+        feature = self.first_conv(feature)                            # BG N 3  -> BG N e_i*2 
+        feature_global = torch.max(feature, dim=1, keepdim=True)[0]   # BG N e_i*2 -> BG 1 e_i*2  # 为什么是max?
+        feature_global = feature_global.expand(-1, N, -1)             # BG 1 e_i*2 -> BG N e_i*2
+        feature = torch.cat([feature, feature_global], dim=-1)        # BG N e_i*2 BG N e_i*2  -> BG N e_i*4
+        feature = self.second_conv(feature)                           # BG N e_i*4 -> BG N C
+        feature_global = torch.max(feature, dim=1, keepdim=False)[0]  # BG N C -> BG C
+        return feature_global
+
+class Pos_Encoder(nn.Module):  # 位置也编码!! 先放到这，肯定要修改的！
+    def __init__(self, encoder_channel):
+        super().__init__()
+        self.e_o = encoder_channel
+        self.e_i = 128
+        self.encoder = nn.Sequential(
+            nn.Linear(3, self.e_i *2),   # 如果换成SparseConv的化， 就是所谓的xCPE！ See PVT3
+            nn.GELU(),
+            nn.Linear(self.e_i * 2, self.e_o)            
+        )
+    
+    def forward(self, pos):
+        """
+        BG 3 -> BG C
+        """
+        return self.encoder(pos)
+
+class FeatPropagation(nn.Module):
+    def __init__(self, group_size):
+        super().__init__()
+        self.k = group_size
+        self.interpolation = interpolation2
+
+    def forward(self, parent_pc:PointCloud, s_pc:PointCloud): 
+        xyz = s_pc.coord
+        new_xyz = parent_pc.coord        # 为什么这样， new_xyz是parent_pc.coord! 想明白这个，就明白底层算法了！
+        input = s_pc.feat
+        offset = s_pc.offset
+        new_offset = parent_pc.offset
+        output = self.interpolation(xyz, new_xyz, input, offset, new_offset, self.k)
+        return output
+    
 class PointSIS(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -144,17 +220,16 @@ class PointSIS(nn.Module):
         self.shuffle_orders = config.shuffle_orders
         self.patch_size = config.patch_size
         self.config = config
-        # TODO:
-        self.feature_embedding =  MLP(3, config.d_model, config.d_model)
-        self.pos_embedding =  MLP(3, config.d_model, config.d_model)
+        # 由于有采样动作，就用feature encoder了！
+        self.feature_embedding = Feature_Encoder(config.feature_dims)  #MLP(3, config.d_model, config.d_model)
+        self.pos_embedding = Pos_Encoder(config.pos_dims)              #MLP(3, config.d_model, config.d_model)
         self.tokening = nn.Linear(config.d_model*2, config.d_model)
-        self.swin_layers = nn.ModuleList([SwinMixers(config) for i in range(len(self.order)*self.repeats)])  # 2*4*3,
+        self.swin_layers = nn.ModuleList([SwinMixers(config) for i in range(len(self.order)*self.repeats)]) 
 
 
     def forward(self, pc:PointCloud):
         pc.serialization(order=self.order, shuffle_orders=self.shuffle_orders)
         pad, unpad, shift, shift_back = pc.get_padding_and_inverse(self.patch_size)
-        #对于Mesh数据，是否暂时可以假设数据的密度比较一致，并且normals可以充当feature呢？
         feat = self.feature_embedding(pc.feat)
         pos  = self.pos_embedding(pc.coord)
         f = feat
@@ -168,12 +243,14 @@ class PointSIS(nn.Module):
             f = block(f, shift, shift_back, self.patch_size)
             f = f[unpad]
             f = f[pc.serialized_inverse[the_order]]
-        return f
+        pc.feat = f
+        return pc
 
     
 class PointSIS_SEG(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.grouper = Grouper(config.group_ratio, config.group_size)
         self.pointsis = PointSIS(config)
         self.seg = nn.Sequential(
             nn.Linear(config.d_model, config.d_model),
@@ -181,9 +258,12 @@ class PointSIS_SEG(nn.Module):
             nn.Linear(config.d_model, 2),
             nn.Softmax(dim=-1)           
         )
+        self.feat_propagation = FeatPropagation(config.group_size)
 
-    def forward(self, pc:PointCloud):
-        f = self.pointsis(pc)
-        seg = self.seg(f)
+    def forward(self, parent_pc:PointCloud):
+        s_pc = self.grouper(parent_pc)
+        s_pc = self.pointsis(s_pc)
+        feat = self.feat_propagation(parent_pc, s_pc)        
+        seg  = self.seg(feat)
         return seg
 

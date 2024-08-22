@@ -12,11 +12,13 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 import pm.pointmamba as pms
-from pm.pointmamba import PointSIS_SEG, make_default_config
+from pm.pointmamba import PointSIS_SEG, PointSISFollowmlp_SEG, make_default_config
 from pm.utils.point_cloud import PointCloud
 
 device='cuda'
 torch.device(device)
+
+MODE_CLS = PointSISFollowmlp_SEG  # PointSIS_SEG
 
 seed = 42
 torch.manual_seed(seed)
@@ -39,28 +41,32 @@ def bi_cls(x, *y):  # 没想明白*y！
 
 def collate_fn(batch, device):
     vertices=[]
-    normals=[]
+    # normals=[]
     offset = []
     labels = []
     for example in batch:
-        oral_scan = o3d.geometry.TriangleMesh()
-        oral_scan.vertices  = o3d.utility.Vector3dVector(example["vertices"])
-        oral_scan.triangles = o3d.utility.Vector3iVector(example["triangles"])
-        oral_scan.compute_vertex_normals()
-        vertex_normals = np.asarray(oral_scan.vertex_normals)    # TODO：制做数据集时去处理， 这儿就省事了！
+        # oral_scan = o3d.geometry.TriangleMesh()
+        # oral_scan.vertices  = o3d.utility.Vector3dVector(example["vertices"])
+        # oral_scan.triangles = o3d.utility.Vector3iVector(example["triangles"])
+        # oral_scan.compute_vertex_normals()
+        # vertex_normals = np.asarray(oral_scan.vertex_normals)    # TODO：制做数据集时去处理， 这儿就省事了！
 
         vertices.append(torch.tensor(example["vertices"], dtype=torch.float))
-        normals.append(torch.tensor(vertex_normals, dtype=torch.float))
+        # normals.append(torch.tensor(vertex_normals, dtype=torch.float))
         offset.append(example["vertices"].shape[0])
         label = torch.tensor(example["label"])
         label = label.map_(label,bi_cls)
         labels.append(label)
     
     vertices = torch.cat(vertices).cuda(device)
-    normals  = torch.cat(normals).cuda(device)
+    # normals  = torch.cat(normals).cuda(device)
     labels   = torch.cat(labels).cuda(device)
     offset = torch.tensor(offset, device=device).cumsum(0).int()
-    return Dict(coord=vertices,feat=normals, labels=labels, offset=offset, grid_size=1.0e-2)
+    return Dict(coord=vertices,
+                #feat=normals, 
+                labels=labels, 
+                offset=offset, 
+                grid_size=1.0e-2)
 
 collate_fn = partial(collate_fn, device=device)
 
@@ -81,7 +87,7 @@ def loss_fn(pre,gt):
     return loss
 
 #参数：TODO
-epoches = 10
+epoches = 1
 
 def train():
     #Some Dir
@@ -93,10 +99,9 @@ def train():
     train_loader = dataloader()
     test_loader = dataloader(split="test")
     m_config = make_default_config()
-    model =PointSIS_SEG(m_config)
+    model = MODE_CLS(m_config)
     if checkpoints_file.exists():
-        ckpt = torch.load(checkpoints_file)
-        model.load_state_dict(ckpt)
+        model.load_state_dict(torch.load(checkpoints_file))
         print("Load a saved model")
     
     model= model.to(device)
@@ -106,11 +111,11 @@ def train():
     for epoch in range(epoches):
         model= model.train()
         loss_batch = []
-        with tqdm(train_loader) as t:  #
+        with tqdm(test_loader) as t:  #
             for i, data in enumerate(t):
                 optimizer.zero_grad()    
-                sn=model(PointCloud(data))
-                loss = loss_fn(sn, data["labels"])
+                pred=model(PointCloud(data))
+                loss = loss_fn(pred, data["labels"])
                 loss.backward()                
                 optimizer.step()
 
@@ -123,18 +128,26 @@ def train():
         with torch.no_grad():        
             with tqdm(test_loader) as t:
                 IoU_epoch =[]
+                Acc_epoch =[]
                 for i,data in enumerate(t):
-                    sn = model(PointCloud(data))
-                    total = sn.shape[0]
-                    sn = torch.argmax(sn, dim=-1)
-                    intersection = (sn*data["labels"]).sum().cpu().numpy()
-                    IoU = intersection/data["labels"].sum().cpu().numpy()
+                    pred = model(PointCloud(data))                      # prediction
+                    total = pred.shape[0]
+                    pred = torch.argmax(pred, dim=-1)
+                    TP = (pred    *data["labels"]).sum().cpu().numpy()       # 对牙齿的正确预测数
+                    FP = ((1-pred)*data["labels"]).sum().cpu().numpy()       # 对牙齿的错误预测数 
+                    TN = ((1-pred)*(1-data["labels"])).sum().cpu().numpy()   # 对牙龈的正确预测数
+                    FN = (pred    *(1-data["labels"])).sum().cpu().numpy()   # 对牙龈的错误预测数
+
+                    IoU = TP/(TP+FP+FN)                                  # TP其实是交集的大小。 TP+FP+FN其实是并集的大小
                     IoU_epoch.append(IoU)
-                    t.set_description(f"Epoch {epoch}/{epoches}.IoU:{IoU:6f}")
+                    Acc = (TP+TN)/(TP+FP+TN+FN)
+                    Acc_epoch.append(Acc)
+                    t.set_description(f"Epoch {epoch}/{epoches}: IoU:{IoU:6f} Acc:{Acc:6f}")
                     # equals = sn.eq(data["labels"]).sum().cpu().numpy()
                     # tooth_points = data["labels"].sum().cpu().numpy()
-            mIoU = np.mean(IoU_epoch)   
-        print(f"Epoch_{epoch}/{epoches}'s mIoU:{mIoU:6f}")     
+            mIoU = np.mean(IoU_epoch)
+            mAcc = np.mean(Acc_epoch)   
+        print(f"Epoch_{epoch}/{epoches}'s mIoU:{mIoU:6f}, mAcc:{mAcc:6f}")     
         torch.save(model.state_dict(), checkpoints_file)
         print("Saved a checkpoints!")
 train()

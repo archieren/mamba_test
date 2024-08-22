@@ -32,7 +32,7 @@ class PointSISConfig():
         # About SFC
         #Spatial Filling Curve!
         #{"z", "z-trans", "hilbert", "hilbert-trans"}
-        order              = ["hilbert", "hilbert-trans"]  # ["z", "z-trans", "hilbert", "hilbert-trans"]# 
+        order              = ["hilbert", "hilbert-trans"] # ["z", "z-trans", "hilbert", "hilbert-trans"]# 
         shuffle_orders:bool=True
         mamba_config = asdict(Mamba1Config())
         d_model:      int = 128       # feature_dim pos_dim d_model 是一样的!, 未将d_model放到mamba_config里！
@@ -40,15 +40,16 @@ class PointSISConfig():
         pos_dims:     int = d_model
         
         #Follow SWIN
-        patch_size:   int = 1024
+        patch_size:   int = 4096
         #mamba in swin
-        cascade:      bool=True
+        cascade:      bool=False
         repeats:      int = 3
         
         #Follow MLP 
         # AboutGroup
+        group_ratio:  float = 0.09 # 按ratio方式下采样！
         num_group:    int = 16384 # 8096 # 16384
-        group_size:   int = 17  # 邻居个数       
+        group_size:   int = 11  # 邻居个数       
         depth:        int = 12 # 控制层数！！！
         out_indices       = [3,7,11]   # []
 

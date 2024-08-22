@@ -14,7 +14,8 @@ from mamba_ssm.modules.mamba_simple import Mamba
 # 直接使用mamba推荐的Block, 不像Point Mamba抄过来! 
 # 这需要看片文章"On Layer Normalization in the Transformer Architecture"
 from mamba_ssm.modules.block import Block 
-from pm.utils.point_cloud import PointCloud, group_by_fps_knn_
+from pm.utils.point_cloud import PointCloud, group_by_group_number
+from pointops import interpolation2
 
 class MLP(nn.Module):
     def __init__(
@@ -39,14 +40,15 @@ class MLP(nn.Module):
         x = self.drop(x)
         return x
 
-class Grouper(nn.Module):
+class Grouper_By_NumGroup(nn.Module):   # TODO：这个应当改名。采样的时候，还生成了Feature！
     def __init__(self, num_group, group_size):
         super().__init__()
         self.num_group = num_group
         self.group_size = group_size
     
     def forward(self, pc:PointCloud):
-        return group_by_fps_knn_(pc, self.num_group, self.group_size)
+        return group_by_group_number(pc, self.num_group, self.group_size)
+
 
 class Feature_Encoder(nn.Module):        # 改自Point Mamba！
     def __init__(self, encoder_channel):
@@ -89,7 +91,7 @@ class Pos_Encoder(nn.Module):  # 位置也编码!! 先放到这，肯定要修�
         self.e_o = encoder_channel
         self.e_i = 128
         self.encoder = nn.Sequential(
-            nn.Linear(3, self.e_i *2),   # 如果换成SparseConv的化， 就是所谓的xCPE！ See PVT3
+            nn.Linear(3, self.e_i *2),   # 如果换成SparseConv的化,就是所谓的xCPE！ See PVT3
             nn.GELU(),
             nn.Linear(self.e_i * 2, self.e_o)            
         )
@@ -100,6 +102,21 @@ class Pos_Encoder(nn.Module):  # 位置也编码!! 先放到这，肯定要修�
         """
         return self.encoder(pos)
 
+class FeatPropagation(nn.Module):
+    def __init__(self, group_size):
+        super().__init__()
+        self.k = group_size
+        self.interpolation = interpolation2
+
+    def forward(self, parent_pc:PointCloud, s_pc:PointCloud): 
+        xyz = s_pc.coord
+        new_xyz = parent_pc.coord        # 为什么这样， new_xyz是parent_pc.coord! 想明白这个，就明白底层算法了！
+        input = s_pc.feat
+        offset = s_pc.offset
+        new_offset = parent_pc.offset
+        output = self.interpolation(xyz, new_xyz, input, offset, new_offset, self.k)
+        return output
+    
 class MixerLayers(nn.Module):
     """
     残差式板块栈。直接借用Mamba官方实现里面的Block。
@@ -134,15 +151,6 @@ class MixerLayers(nn.Module):
                 feature_list.append(h_o)
         return feature_list            
 
-class Decoder(nn.Module):
-    """
-    解码，不能采用PointMlp的上采样的方式。
-    """
-    def __init__(self, config):
-        super().__init__()
-
-    def forward(self, ):
-        pass
 
 class PointSIS_FollowMLP(nn.Module):
     def __init__(self, config):
@@ -150,8 +158,7 @@ class PointSIS_FollowMLP(nn.Module):
         self.order = [config.order] if isinstance(config.order, str) else config.order
         self.shuffle_orders = config.shuffle_orders
         self.config = config
-
-        self.grouper = Grouper(config.num_group, config.group_size)        
+        
         self.feature_encoder = Feature_Encoder(config.feature_dims)  # 其实config.feature_dims == config.pos_dim
         self.pos_encoder = Pos_Encoder(config.pos_dims)
         self.mixers = MixerLayers(config)
@@ -162,7 +169,7 @@ class PointSIS_FollowMLP(nn.Module):
             nn.Linear(config.feature_dims, config.d_model)
         )
 
-        self.fuse_f = nn.Sequential(                                 #合并各层的特征。
+        self.fuse_f = nn.Sequential(                                 #合并各输出层的特征。
             nn.Linear(config.d_model * len(config.out_indices), config.d_model),
             nn.LayerNorm(config.d_model),
             nn.GELU(),
@@ -174,28 +181,25 @@ class PointSIS_FollowMLP(nn.Module):
             nn.LayerNorm(config.d_model),
             nn.GELU(),
             nn.Linear(config.d_model, config.d_model)
-        )
+        )        
 
-    def forward(self, data_dict):
-        parent_point = PointCloud(data_dict)
-        # parent_point.serialization(order=self.order, shuffle_orders=self.shuffle_orders)  # 父点集，就没必要序列化了！
-        #s_idx, s_n, s_xyz, s_order, s_inverse = self.grouper(parent_point)
-        s_point = self.grouper(parent_point)
-        s_point.serialization(order=self.order, shuffle_orders=self.shuffle_orders)
-        s_feat  = s_point.feat 
-        s_coord = s_point.coord 
-        s_order = s_point.serialized_order 
-        s_inverse = s_point.serialized_inverse        
+
+    def forward(self, s_pc:PointCloud):
+        s_pc.serialization(order=self.order, shuffle_orders=self.shuffle_orders)        
+        s_feat  = s_pc.feat 
+        s_coord = s_pc.coord 
+        s_order = s_pc.serialized_order 
+        s_inverse = s_pc.serialized_inverse        
         
-        b_s = s_point.batch[-1]+1
+        b_s = s_pc.batch[-1]+1
         o_s = len(self.order)        
         # s_order, s_inverse 均为 order_size batch_size*num_group
-        s_feat = self.feature_encoder(s_feat)                   # => batch_size*num_group d_model
-        s_coord = self.pos_encoder(s_coord)                   # => batch_size*num_group d_model  
-        s = torch.cat([s_feat, s_coord], dim= -1)
-        s = self.fuse_e(s)                                 # 融合各编码 => batch_size*num_group d
-        s = s.unsqueeze(0).repeat(o_s,1,1)                 # 为每种排序准备排序的数据 => order_size batch_size*num_group d
-        s = torch_scatter.scatter(s,index=s_order, dim=1)  # 排序 => order_size batch_size*num_group d        
+        s_feat = self.feature_encoder(s_feat)              # => (b g) d
+        s_coord = self.pos_encoder(s_coord)                # => (b g) d  
+        s = torch.cat([s_feat, s_coord], dim= -1)          # => (b g) (d*2)
+        s = self.fuse_e(s)                                 # 融合各编码 => (b g) d
+        s = s.unsqueeze(0).repeat(o_s,1,1)                 # 为每种排序准备排序的数据 => o (b g) d
+        s = torch_scatter.scatter(s,index=s_order, dim=1)  # 排序 => o (b g) d       
         s = rearrange(s, "o (b g) d -> b (o g) d", b=b_s)  # 将各个排序拼接,参看PointMamba的第四版!!
         s = self.mixers(s)                                 # 返回的是抽取的几个层的返回结果的列表 
         s = torch.cat(s, dim= -1)                          # 将各层mamba的结果，拼接！！
@@ -203,6 +207,28 @@ class PointSIS_FollowMLP(nn.Module):
         s = rearrange(s, "b (o g) d -> o (b g) d", o=o_s)  # 拆分各排序
         s = torch_scatter.scatter(s,index=s_inverse, dim=1)# 逆排序 => order_size batch_size*num_group d
         s = rearrange(s, "o (b g) d -> b g (o d)", b= b_s) # 调整，将同一点，在各排序情况下的特征拼接到一起！
-        s = self.fuse_o(s)                                 # 后面咋办？
-        return s
+        s = self.fuse_o(s)                                 # b g d
+        s = rearrange(s, "b g d -> (b g) d")               # (b g) d
 
+        s_pc.feat = s        
+        return s_pc
+
+class PointSISFollowmlp_SEG(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.grouper = Grouper_By_NumGroup(config.num_group, config.group_size)
+        self.pointsis_followmlp = PointSIS_FollowMLP(config)
+        self.seg = nn.Sequential(
+            nn.Linear(config.d_model, config.d_model),
+            nn.GELU(),
+            nn.Linear(config.d_model, 2),
+            nn.Softmax(dim=-1)           
+        )
+        self.feat_propagation = FeatPropagation(config.group_size)
+
+    def forward(self, parent_pc:PointCloud):
+        s_pc = self.grouper(parent_pc)
+        s_pc = self.pointsis_followmlp(s_pc)
+        feat = self.feat_propagation(parent_pc, s_pc)
+        seg = self.seg(feat)        
+        return seg
