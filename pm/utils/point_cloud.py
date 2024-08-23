@@ -141,7 +141,7 @@ class PointCloud(Dict):
                 # s_ = _offset_pad[i + 1] - 2 * patch_size + remainder          # 这个取法要出问题！！！必须要求这个bin 大于两个patch_size!!!
                 # pad[ t_: _offset_pad[i + 1]] = pad[s_: _offset_pad[i + 1] - patch_size]
                 s_ = _offset_pad[i]                                            # 被提取段的起点。我这改成序列i的起点！x相当于循环补位！
-                pad[ t_ : t_ + pad_num] = pad[s_ : s_ + pad_num]
+                pad[ t_ : t_ + pad_num] = pad[s_ : s_ + pad_num]               # TODO: 始终有危险！ batch_bin[i] < patch_size/2 就要出问题！
             pad[_offset_pad[i] : _offset_pad[i + 1]] -= Ps
 
         pad_shift =torch.arange(_offset_pad[-1], device=offset.device)
@@ -238,7 +238,7 @@ def group_by_group_number_(xyz_pc:PointCloud,
     s_n_idx, _dist = knn(group_size, xyz_pc.coord, xyz_pc.offset, s_xyz,s_offset)    ## [batch_size*num_group, group_size ], _
     s_n = xyz_pc.coord[s_n_idx]                                                      # [batch_size*num_group , group_size, coord's dim]
     s_n = s_n - s_xyz.unsqueeze(1)                                                   # [batch_size*num_group , group_size, vector's dim]
-    s_n = s_n[:,1:, :]                                                               # 需不需要,去掉组内第一个vector? 
+    s_n = s_n[:,1:, :]                                                               
     
     #排序,根据原有的SFC遍历序好,获得采样点的各总次序!
     s_order = torch.argsort(xyz_pc.serialized_code[:, s_idx])                                           # 获得样本的各种序列吗, 种类排序! [order_s, batch_size * num_group]
@@ -274,7 +274,7 @@ def group_by_ratio(parent_pc:PointCloud, group_size:int, ratio=0.1):
     s_n_idx, _dist = knn(group_size, parent_pc.coord, parent_pc.offset, s_xyz,s_offset)    # [batch_size*num_group, group_size ], _
     s_n = parent_pc.coord[s_n_idx]                                                         # [batch_size*num_group, group_size, coord's dim]
     s_n = s_n - s_xyz.unsqueeze(1)                                                         # [batch_size*num_group, group_size, vector's dim]
-    #s_n = s_n[:,1:, :]                                                                    # TODO: 需不需要,去掉组内第一个vector? 
+    #s_n = s_n[:,1:, :]                                                                    # TODO: 需不需要,去掉组内第一个vector? 不需要！从两个点集来看？
     
     s_data = Dict(coord=s_xyz, 
                   feat=s_n,
@@ -301,7 +301,7 @@ def group_by_group_number(parent_pc:PointCloud,
     s_n_idx, _dist = knn(group_size, parent_pc.coord, parent_pc.offset, s_xyz,s_offset)    # [batch_size*num_group, group_size ], _
     s_n = parent_pc.coord[s_n_idx]                                                         # [batch_size*num_group, group_size, coord's dim]
     s_n = s_n - s_xyz.unsqueeze(1)                                                         # [batch_size*num_group, group_size, vector's dim]
-    #s_n = s_n[:,1:, :]                                                                    # TODO: 需不需要,去掉组内第一个vector? 
+
     
     s_data = Dict(coord=s_xyz, 
                   feat=s_n,

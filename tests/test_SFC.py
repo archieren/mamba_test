@@ -397,6 +397,7 @@ def test_remote_pointsis():
     res = np.array(res["response"])
     indx= np.nonzero(res)[0]
     print(indx.shape)
+    print(res.shape)
 
     t = o3d.geometry.PointCloud()
     points = np.asarray(mesh.vertices)
@@ -412,9 +413,9 @@ def test_remote_pointsis():
 # test_curvenet()
 
 # test_point_transformer()
-test_point_sis()
+# test_point_sis()
 # test_point_sis_FollowMLP()
 # test_patch()
 # test_serializedpooling()
-# test_remote_pointsis()
+test_remote_pointsis()
 input()
