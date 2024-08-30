@@ -5,6 +5,7 @@ import random,time
 import numpy as np
 import open3d as o3d
 import torch
+import torch.nn as nn
 
 from addict import Dict
 from pathlib import Path
@@ -156,8 +157,17 @@ def test_grouping_by_fps():
     for i in range(3):
         print(i)
         start_time = time.time()
-        s_pc= group_by_group_number(pc,16384, 7) # (1024*)
+        s_pc= group_by_group_number(pc,16384, 11) # (1024*)
         time_it(start_time)
+
+        start_time = time.time()
+        s_s_pc= group_by_group_number(s_pc,4096, 11) # (1024*)
+        time_it(start_time)
+
+        start_time = time.time()
+        s_s_s_pc= group_by_group_number(s_s_pc,1024, 11) # (1024*)
+        time_it(start_time)         
+
 
 
     
@@ -291,7 +301,7 @@ def test_point_sis_FollowMLP():
         pc = PointCloud(dc)
         sn = model(pc)
         time_it(start_time)
-        print(sn.shape)
+        print(len(sn.feat))
     # with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
     #   with profiler.record_function("model_forward"):
     #       output = model(dc)
@@ -405,6 +415,38 @@ def test_remote_pointsis():
     t.points = o3d.utility.Vector3dVector(points)
     t.paint_uniform_color([0.75,1, 0])
     o3d.visualization.draw_geometries([ t, mesh])
+
+def test_mask_predictor():
+    b,q,d = (2, 10, 128)
+    _,_,l = (2, 128, 32)
+    query_embeddings = torch.randn(b,q,d)
+    memory_embeddings = torch.randn(b, d, l)
+    out_mask = torch.zeros((b,q,l))
+    for c in range(d):
+        out_mask += query_embeddings[...,c][...,None] * memory_embeddings[:,None,c]
+    out_mask = (out_mask.sigmoid() < 0.5).bool()
+    # print(out_mask[0, 0])
+    # print(out_mask[0, 0].sum())
+    # print(out_mask.sum(-1).shape)
+    out_mask[torch.where(out_mask.sum(-1) == out_mask.shape[-1])] = False  # 这是在设什么值！
+    print(out_mask)
+
+    # out_mask_p = torch.matmul(query_embeddings, memory_embeddings)
+    # print(out_mask_p.shape)
+
+    # inspect = (out_mask - out_mask_p)
+    # print(inspect.shape)
+    # print(torch.where( inspect > 0.1))
+
+    # decoder_layer = nn.TransformerDecoderLayer(d_model=512, nhead=8)
+    # transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers=6)
+    # memory = torch.rand(10, 32, 512)
+    # tgt = torch.rand(20, 32, 512)
+    # out = transformer_decoder(tgt, memory)
+    # print(out.shape)
+
+
+
 # test_PointCloud()
 # test_grouping_by_ratio()
 # test_grouping_by_fps()
@@ -417,5 +459,6 @@ def test_remote_pointsis():
 # test_point_sis_FollowMLP()
 # test_patch()
 # test_serializedpooling()
-test_remote_pointsis()
+# test_remote_pointsis()
+test_mask_predictor()
 input()

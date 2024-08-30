@@ -7,7 +7,7 @@ from addict import Dict
 from flask import Flask
 from flask import request 
 from pathlib import Path
-from pm.pointmamba import PointSIS_SEG, make_default_config
+from pm.pointmamba import PointSIS_SEG,PointSISFollowmlp_SEG, make_default_config
 from pm.utils.point_cloud import PointCloud
 
 device='cuda'
@@ -47,7 +47,8 @@ def make_data_dict_(upper_stl_path):
 m_config = make_default_config()
 checkpoints_file = __get_ckpt()
 
-model =PointSIS_SEG(m_config)
+MODEL_CLS = PointSIS_SEG # PointSISFollowmlp_SEG
+model =MODEL_CLS(m_config)
 ckpt = torch.load(checkpoints_file)
 model.load_state_dict(ckpt)
 model.to(device=device)

@@ -33,7 +33,7 @@ class PointSISConfig():
         #Spatial Filling Curve!
         #{"z", "z-trans", "hilbert", "hilbert-trans"}
         order              = ["hilbert", "hilbert-trans"] # ["z", "z-trans", "hilbert", "hilbert-trans"]# 
-        shuffle_orders:bool=True
+        shuffle_orders:bool=False
         mamba_config = asdict(Mamba1Config())
         d_model:      int = 128       # feature_dim pos_dim d_model 是一样的!, 未将d_model放到mamba_config里！
         feature_dims: int = d_model
@@ -48,14 +48,19 @@ class PointSISConfig():
         #Follow MLP 
         # AboutGroup
         group_ratio:  float = 0.09 # 按ratio方式下采样！
-        num_group:    int = 16384 # 8096 # 16384
+        num_group:    int = 8096 # 8096 # 16384
         group_size:   int = 11  # 邻居个数       
-        depth:        int = 12 # 控制层数！！！
-        out_indices       = [3,7,11]   # []
+        depth             = [2, 2, 2, 2] # 每层的mamba堆叠深度！！！
+        out_indices       = [3, 7, 11]   # 弃用！
 
 
-        #Fatures encoding!
-        cls_mode=False
+        #MaskDecoder!
+        nhead:               int = 4
+        dim_feedforward:     int = 2048
+        num_feature_levels:  int = 3
+        num_decode_layers:   int = int(num_feature_levels*3)
+        num_queries:         int = 29 # 7*4 + 1
+        dropout:             float = 0.1            
         # Prompting
 
 def make_default_config():

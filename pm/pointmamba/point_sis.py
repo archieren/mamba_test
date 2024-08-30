@@ -148,7 +148,6 @@ class Grouper(nn.Module):
 class Feature_Encoder(nn.Module):        # 改自Point Mamba！
     def __init__(self, encoder_channel):
         super().__init__()
-        print(encoder_channel)
         self.e_o = encoder_channel       # 特征编码输出的通道数！
         self.e_i = 128                   # 特征编码内部使用的通道数！
         self.first_conv = nn.Sequential(
