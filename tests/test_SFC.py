@@ -301,7 +301,6 @@ def test_point_sis_FollowMLP():
         pc = PointCloud(dc)
         sn = model(pc)
         time_it(start_time)
-        print(len(sn.feat))
     # with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
     #   with profiler.record_function("model_forward"):
     #       output = model(dc)
@@ -456,9 +455,9 @@ def test_mask_predictor():
 
 # test_point_transformer()
 # test_point_sis()
-# test_point_sis_FollowMLP()
+test_point_sis_FollowMLP()
 # test_patch()
 # test_serializedpooling()
 # test_remote_pointsis()
-test_mask_predictor()
+# test_mask_predictor()
 input()

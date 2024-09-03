@@ -48,10 +48,10 @@ class PointSISConfig():
         #Follow MLP 
         # AboutGroup
         group_ratio:  float = 0.09 # 按ratio方式下采样！
-        num_group:    int = 8096 # 8096 # 16384
+        num_group:    int = 1024 # 4096 # 8172 # 16384
         group_size:   int = 11  # 邻居个数       
-        depth             = [2, 2, 2, 2] # 每层的mamba堆叠深度！！！
-        out_indices       = [3, 7, 11]   # 弃用！
+        depth             = [4, 2, 3, 1] # 每层的mamba堆叠深度！！！
+        #out_indices       = [3, 7, 11]   # 弃用！
 
 
         #MaskDecoder!
@@ -59,7 +59,7 @@ class PointSISConfig():
         dim_feedforward:     int = 2048
         num_feature_levels:  int = 3
         num_decode_layers:   int = int(num_feature_levels*3)
-        num_queries:         int = 29 # 7*4 + 1
+        num_queries:         int = 29 #  >  7*4 + 1
         dropout:             float = 0.1            
         # Prompting
 
