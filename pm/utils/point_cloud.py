@@ -302,10 +302,18 @@ def group_by_group_number(parent_pc:PointCloud,
     s_n = parent_pc.coord[s_n_idx]                                                         # [batch_size*num_group, group_size, coord's dim]
     s_n = s_n - s_xyz.unsqueeze(1)                                                         # [batch_size*num_group, group_size, vector's dim]
 
-    
-    s_data = Dict(coord=s_xyz, 
+    if "labels" in parent_pc.keys():
+        s_lables = parent_pc.labels[s_idx]
+        s_data = Dict(coord=s_xyz, 
                   feat=s_n,
+                  labels=s_lables,
                   offset=s_offset,
                   grid_size=parent_pc.grid_size,                                            # 用父点云的grid_size
-                  index_back_to_parent=s_idx)                                               # 用于构造一个新的点集！
+                  index_back_to_parent=s_idx)         
+    else:
+        s_data = Dict(coord=s_xyz, 
+                    feat=s_n,
+                    offset=s_offset,
+                    grid_size=parent_pc.grid_size,                                            # 用父点云的grid_size
+                    index_back_to_parent=s_idx)                                               # 用于构造一个新的点集！
     return PointCloud(s_data)

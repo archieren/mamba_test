@@ -14,7 +14,7 @@ from mamba_ssm.modules.mamba_simple import Mamba
 # 这需要看片文章"On Layer Normalization in the Transformer Architecture"
 from mamba_ssm.modules.block import Block 
 from pm.pointmamba.conifuguration_point_sis import Mamba1Config, PointSISConfig
-from pm.pointmamba.pointmask import MaskDecoder
+from pm.pointmamba.pointmask import MaskDecoder, PMHungarianMatcher
 from pm.utils.point_cloud import PointCloud, group_by_group_number
 from pointops import interpolation2
 
@@ -182,15 +182,15 @@ class PointSIS_FollowMLP(nn.Module):
             hidden_state = torch_scatter.scatter(hidden_state,index=s_inverse, dim=1)# 逆排序 => order_size batch_size*num_group d
             hidden_state = rearrange(hidden_state, "o (b g) d -> b g (o d)", b= b_s) # 调整，将同一点，在各排序情况下的特征拼接到一起！
             hidden_state = self.fuse_o(hidden_state)
-            hidden_states.append(hidden_state)                                       # [b g d, ]
-            hidden_state = rearrange(hidden_state, "b g d -> (b g) d")               # (b g) d            
+            hidden_state = rearrange(hidden_state, "b g d -> (b g) d")               # (b g) d 
+            hidden_states.append(hidden_state)                                       # [(b g) d, ]           
         s_pc.feat = hidden_states                                  # b (l g) d  TODO: 感觉PointCloud.feat这个域被重用了太多！   
         return s_pc
     
 class PointSIS_Encoder(nn.Module):         
     """
-    这一模块，是尝试性的。看看有无必要，将各层的结果和起来做个处理！
-    目前来看，只是作个简单的层间的相关性操作！
+    这一模块，是尝试性的。看看有无必要，将各层的结果联合起来做个处理！
+    目前来看，只是作个简单的层间的相关性操作！还不能当作尺度间的attention！
     """
     def __init__(self, config:PointSISConfig) -> None:
         super().__init__()
@@ -203,7 +203,7 @@ class PointSIS_Encoder(nn.Module):
                                     
     def forward(self, s_pc:PointCloud):
         s_feat  = s_pc.feat[::-1]            # [b g d, ...] 列表长l # TODO:为什么逆序,思考!
-        s_coord = s_pc.coord                 # (b g) 3      # TODO:可以考虑再次作坐标嵌入
+        # s_coord = s_pc.coord                 # (b g) 3      # TODO:可以考虑再次作坐标嵌入
         s_order = s_pc.serialized_order      # o (b g)
         s_inverse = s_pc.serialized_inverse  # o (b g)
 
@@ -213,22 +213,30 @@ class PointSIS_Encoder(nn.Module):
         g = self.num_group
 
         level_feat=s_feat
-        print(len(s_feat))
-        for o in range(o_s):
-            order = rearrange(s_order[o], "(b g) -> b g", b=b_s)        # (b g) -> b g
-            for idx,feat in enumerate(level_feat):   
-                feat = torch_scatter.scatter(feat, index=order, dim=1)
-                level_feat[idx] = feat
-            level_feat = torch.cat(level_feat, dim=1)                    # => b (l g) d
-            level_feat = self.mixers[o](level_feat)
-            level_feat = list(level_feat.split(g,dim=1))
-            inverse = rearrange(s_inverse[o], "(b g) -> b g", b=b_s)     #(b g) -> b g
-            for idx, feat in enumerate(level_feat):
-                level_feat[idx] = torch_scatter.scatter(feat, index= inverse, dim=1)
+        for o in range(o_s):   # TODO：order间，串行算了, 简单些！.
+            # Order 
+            order = s_order[o]
+            o_level_feat = []
+            for feat in level_feat: 
+                feat = torch_scatter.scatter(feat, index=order, dim=0)        # (b g) d, (b g) -> b g d 
+                feat = rearrange(feat, "(b g) d -> b g d ", b = b_s)
+                o_level_feat.append(feat)
+            #
+            o_level_feat = torch.cat(o_level_feat, dim=1)                    # => b (l g) d
+            o_level_feat = self.mixers[o](o_level_feat)                      # b (l g) d => b (l g) d
+            o_level_feat = list(o_level_feat.split(g,dim=1))                 # b (l g) d => [b g d,...]
+            # Inverse
+            inverse = s_inverse[o]
+            level_feat = []
+            for feat in o_level_feat:
+                feat = rearrange(feat, " b g d -> (b g) d")
+                level_feat.append(torch_scatter.scatter(feat, index= inverse, dim=0))
         
+        for idx, feat in enumerate(level_feat):     # 为了MaskDecoder的输入需要！！！
+            feat = rearrange(feat, " (b g) d -> b g d", b=b_s)
+            level_feat[idx] = feat
         s_pc.feat = level_feat
         return s_pc
-
 
 
 class PointSISFollowmlp_SEG(nn.Module):
@@ -250,6 +258,8 @@ class PointSISFollowmlp_SEG(nn.Module):
         self.num_queries = config.num_queries
         self.query_embedder = nn.Embedding(config.num_queries, config.d_model)        # 可学习的查询！
         self.query_position_embedder = nn.Embedding(config.num_queries, config.d_model)   # TODO：位置也是可学习的？？？ Mask2Former就是如此！！！
+        
+        self.matcher = PMHungarianMatcher()
 
     def forward(self, parent_pc:PointCloud):
         #
@@ -264,14 +274,16 @@ class PointSISFollowmlp_SEG(nn.Module):
         query_position_embeddings = self.query_position_embedder.weight.unsqueeze(0).repeat(b_s, 1, 1)
         point_embedding = s_pc.feat[-1]
         encoder_hidden_states = s_pc.feat[0:-1]
-        # TODO:有个大问题,输入mask_decoder,point_embedding,encoder_hidden_states是否需要序列化?在Transformer机制下，可以先不考虑?
+        # TODO:有个问题,mask_decoder的参数point_embedding,encoder_hidden_states是否需要序列化?在Transformer机制下，可以先不考虑?作也容易！
         pred_mask, q = self.mask_decoder(query_embeddings = query_embeddings,
                               query_position_embeddings= query_position_embeddings,
                               point_embeddings = point_embedding,
                               encoder_hidden_states= encoder_hidden_states)
         # feat = self.feat_propagation(parent_pc, s_pc)
         # seg = self.seg(feat)
-        print(pred_mask.shape) 
-        print(q.shape)
-       
+        pred_probs = self.class_predict(q)
+        if "labels" in s_pc.keys():
+            labels = rearrange(s_pc.labels, "(b g) -> b g", b=b_s)
+            m_i = self.matcher(pred_mask,pred_probs,labels)
+            print(m_i[0]) 
         return s_pc
