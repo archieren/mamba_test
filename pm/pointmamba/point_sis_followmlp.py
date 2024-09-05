@@ -14,7 +14,8 @@ from mamba_ssm.modules.mamba_simple import Mamba
 # 这需要看片文章"On Layer Normalization in the Transformer Architecture"
 from mamba_ssm.modules.block import Block 
 from pm.pointmamba.conifuguration_point_sis import Mamba1Config, PointSISConfig
-from pm.pointmamba.pointmask import MaskDecoder, PMHungarianMatcher
+from pm.pointmamba.losses import PMLoss,tooth_lables
+from pm.pointmamba.pointmask import MaskDecoder
 from pm.utils.point_cloud import PointCloud, group_by_group_number
 from pointops import interpolation2
 
@@ -197,7 +198,7 @@ class PointSIS_Encoder(nn.Module):
         self.order = [config.order] if isinstance(config.order, str) else config.order
         self.num_group = config.num_group
         self.num_feature_levels = config.num_feature_levels
-        self.mixers = nn.ModuleList([MixerLayers(d_model=config.d_model, depth= 2, mamba_config=config.mamba_config)
+        self.mixers = nn.ModuleList([MixerLayers(d_model=config.d_model, depth=config.enc_layer_depth, mamba_config=config.mamba_config)
                                      for _ in self.order])
         
                                     
@@ -259,7 +260,7 @@ class PointSISFollowmlp_SEG(nn.Module):
         self.query_embedder = nn.Embedding(config.num_queries, config.d_model)        # 可学习的查询！
         self.query_position_embedder = nn.Embedding(config.num_queries, config.d_model)   # TODO：位置也是可学习的？？？ Mask2Former就是如此！！！
         
-        self.matcher = PMHungarianMatcher()
+        self.loss = PMLoss(config)
 
     def forward(self, parent_pc:PointCloud):
         #
@@ -275,15 +276,16 @@ class PointSISFollowmlp_SEG(nn.Module):
         point_embedding = s_pc.feat[-1]
         encoder_hidden_states = s_pc.feat[0:-1]
         # TODO:有个问题,mask_decoder的参数point_embedding,encoder_hidden_states是否需要序列化?在Transformer机制下，可以先不考虑?作也容易！
-        pred_mask, q = self.mask_decoder(query_embeddings = query_embeddings,
-                              query_position_embeddings= query_position_embeddings,
-                              point_embeddings = point_embedding,
-                              encoder_hidden_states= encoder_hidden_states)
+        pred_mask, q = self.mask_decoder(                               # -> b q g , b q d
+                            query_embeddings = query_embeddings,
+                            query_position_embeddings= query_position_embeddings,
+                            point_embeddings = point_embedding,
+                            encoder_hidden_states= encoder_hidden_states)
         # feat = self.feat_propagation(parent_pc, s_pc)
         # seg = self.seg(feat)
-        pred_probs = self.class_predict(q)
-        if "labels" in s_pc.keys():
+        pred_probs = self.class_predict(q)                             # b q d -> b q l      # l代表num_labels+1
+        if "labels" in s_pc.keys():    # 如果有标签，就计算loss！！！
             labels = rearrange(s_pc.labels, "(b g) -> b g", b=b_s)
-            m_i = self.matcher(pred_mask,pred_probs,labels)
-            print(m_i[0]) 
+            m_i = self.loss(pred_mask,pred_probs,labels)  # 
+            print(m_i) 
         return s_pc

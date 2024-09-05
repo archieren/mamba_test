@@ -87,6 +87,11 @@ def dataloader(split="train"):
 #参数：TODO
 epoches = 1
 
+def time_it(start_time):
+    stop_time = time.time()
+    print("耗时: {:.2f}秒".format(stop_time - start_time))
+    return
+
 def train():
     #Some Dir
     exp_dir = Path('./log/')
@@ -105,8 +110,10 @@ def train():
     model= model.to(device)
     
     for epoch in range(epoches):
-        for i, data in enumerate(test_loader):   
+        for i, data in enumerate(test_loader):
+            start_time = time.time()   
             pred=model(PointCloud(data))
+            time_it(start_time)
         
 train()
 input()
