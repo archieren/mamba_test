@@ -281,11 +281,17 @@ class PointSISFollowmlp_SEG(nn.Module):
                             query_position_embeddings= query_position_embeddings,
                             point_embeddings = point_embedding,
                             encoder_hidden_states= encoder_hidden_states)
-        # feat = self.feat_propagation(parent_pc, s_pc)
-        # seg = self.seg(feat)
+
         pred_probs = self.class_predict(q)                             # b q d -> b q l      # l代表num_labels+1
         if "labels" in s_pc.keys():    # 如果有标签，就计算loss！！！
             labels = rearrange(s_pc.labels, "(b g) -> b g", b=b_s)
             m_i = self.loss(pred_mask,pred_probs,labels)  # 
-            print(m_i) 
-        return s_pc
+            parent_pc.loss = m_i
+        pred_mask = rearrange(pred_mask,"b q g -> b g q")
+        pred_mask = rearrange(pred_mask, "b g q -> (b g) q")
+        s_pc.feat = pred_mask.contiguous()       # TODO:老问题 s_pc的feat过载太多，看怎么清晰一下！！！
+        feat = self.feat_propagation(parent_pc, s_pc)
+        parent_pc.feat = feat
+        parent_pc.pred_probs = pred_probs
+        del s_pc
+        return parent_pc

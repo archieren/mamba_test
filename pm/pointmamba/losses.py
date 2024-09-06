@@ -236,9 +236,9 @@ def tooth_lables(labels:torch.Tensor) -> List[torch.Tensor]: # b g -> [t,...], [
                 x = x.unsqueeze(0)
                 masks.append(x)
         num_target = len(masks)   # TODO:需要检查 num_target>0
-        class_labels = torch.ones(num_target, device=labels.device).int()       #  t
+        class_labels = torch.ones(num_target, device=labels.device).long()       #  t        # TODO: t个目标, 每个目标都是标签1
         b_class_labels.append(class_labels)
-        mask_labels = torch.cat(masks, dim=0).int()                             # t g
+        mask_labels = torch.cat(masks, dim=0).float()                             # t g      # TODO: 每个目标, 都有一个掩码！
         b_mask_labels.append(mask_labels)
     return b_class_labels, b_mask_labels
 
@@ -333,9 +333,9 @@ class PMHungarianMatcher(nn.Module):
         self,
         masks_queries_logits: torch.Tensor,          # b q g
         class_queries_logits: torch.Tensor,          # b q l
-        mask_labels: List[torch.Tensor],             # [t g,...]  len_of_list: b
-        class_labels: List[torch.Tensor],            # [t,...]  len_of_list: b
-    ) -> List[Tuple[Tensor]]:                        # [(t, t),...]  len_of_list: b
+        mask_labels: List[torch.Tensor],             # [t g,...],  len_of_list: b
+        class_labels: List[torch.Tensor],            # [t,...] , len_of_list: b
+    ) -> List[Tuple[Tensor]]:                        # [(t, t),...] , len_of_list: b
         """
         Returns:
             matched_indices (`List[Tuple[Tensor]]`): A list of size batch_size, containing tuples of (index_i, index_j)
@@ -367,13 +367,13 @@ class PMHungarianMatcher(nn.Module):
             cost_dice = pair_wise_dice_loss(pred_mask, target_mask)                   # q g, t g -> q t
             # final cost matrix
             cost_matrix = self.cost_mask * cost_mask + self.cost_class * cost_class + self.cost_dice * cost_dice
-            # do the assigmented using the hungarian algorithm in scipy
-            assigned_indices: Tuple[np.array] = linear_sum_assignment(cost_matrix.cpu())   # 用的是scipy里的实现！
+            # 解决指派问题,用的是scipy里的实现！
+            assigned_indices: Tuple[np.array] = linear_sum_assignment(cost_matrix.cpu())   # (t, t)
             indices.append(assigned_indices)
 
         # It could be stacked in one tensor
         matched_indices = [
-            (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices
+            (torch.as_tensor(i, dtype=torch.long), torch.as_tensor(j, dtype=torch.long)) for i, j in indices
         ]
         return matched_indices
     
@@ -402,7 +402,8 @@ class PMLoss(nn.Module):
         # Weight to apply to the null class
         self.eos_coef = config.no_object_weight
         empty_weight = torch.ones(self.num_labels + 1)
-        empty_weight[-1] = self.eos_coef
+        empty_weight[0] = self.eos_coef                    # TODO: 到底是0,还是-1.
+        #empty_weight[-1] = self.eos_coef
         self.register_buffer("empty_weight", empty_weight)
 
 
@@ -425,21 +426,26 @@ class PMLoss(nn.Module):
         pred_logits = class_queries_logits
         batch_size, num_queries, _ = pred_logits.shape
         criterion = nn.CrossEntropyLoss(weight=self.empty_weight)
-        idx = self._get_predictions_permutation_indices(indices)  # ( N1+N2 ) 
-        target_classes_o = torch.cat([target[indices_tgt] for target, (_, indices_tgt) in zip(class_labels, indices)])  #  t1+t2+t3...
-        target_classes = torch.full((batch_size, num_queries), fill_value=self.num_labels,  device=pred_logits.device)  # dtype=target_classes_o.dtype,
-        print("....", target_classes[idx].shape)
-        target_classes[idx] = target_classes_o
-        # print(target_classes_o)
-        # print(pred_logits)
+        # 下面这段,要注意各种索引技巧！！！
+        # idx==(batch_indices, prediction_indices), shape为(t_0+t_1+...+t_(b-1), t_0+t_1+...+t_(b-1)).索引出了t_0+t_1+...+t_(b-1)个位置！
+        idx = self._get_predictions_permutation_indices(indices)  
+        target_classes_o = torch.cat([target[indices_tgt] for target, (_, indices_tgt) in zip(class_labels, indices)])  #  -> t_0+t_1+...+t_(b-1)
+        # TODO: fill_value是0还是self.num_labels!
+        target_classes = torch.full((batch_size, num_queries), fill_value=0, dtype=target_classes_o.dtype, device=pred_logits.device)  # b q
+        target_classes[idx] = target_classes_o     # 将target_classes,在idx索引出的位置上,填入目标值！！！
+        
         pred_logits_transposed = pred_logits.transpose(1, 2)         # b q l -> b l q
-        loss_ce = criterion(pred_logits_transposed, target_classes)
+        loss_ce = criterion(pred_logits_transposed, target_classes)  # b l q, b q
         losses = {"loss_cross_entropy": loss_ce}
+
+        del pred_logits
+        del target_classes
+
         return losses
 
     def loss_masks(self,
-        masks_queries_logits: torch.Tensor,
-        mask_labels: List[torch.Tensor],
+        masks_queries_logits: torch.Tensor,    # b q g
+        mask_labels: List[torch.Tensor],       # [t g,...]  len_of_list: b
         indices: Tuple[np.array],
         num_masks: int,
     ) -> Dict[str, torch.Tensor]:
@@ -451,9 +457,15 @@ class PMLoss(nn.Module):
             - **loss_dice** -- The loss computed using dice loss on the predicted on the predicted and ground truth,
               masks.
         """
-        # shape (batch_size * num_queries, height, width)
-        pred_masks = masks_queries_logits
-        target_masks = mask_labels
+        # src_idx==(batch_indices, prediction_indices), shape为(t_0+t_1+...+t_(b-1), t_0+t_1+...+t_(b-1)).索引出了t_0+t_1+...+t_(b-1)个位置！
+        src_idx = self._get_predictions_permutation_indices(indices)
+        # tgt_idx==(batch_indices, target_indices), shape为(t_0+t_1+...+t_(b-1), t_0+t_1+...+t_(b-1)).索引出了t_0+t_1+...+t_(b-1)个位置！
+        tgt_idx = self._get_targets_permutation_indices(indices)
+        #
+        pred_masks = masks_queries_logits[src_idx]  # ->(t_0+t_1+...+t_(b-1), g)
+        target_masks = torch.cat([target[target_indices] for target, (_, target_indices) in zip(mask_labels, indices)])
+        # print(target_masks.shape)
+        # target_masks = mask_labels[tgt_idx]         # 
 
         losses = {
             "loss_mask": sigmoid_cross_entropy_loss(pred_masks, target_masks, num_masks),
@@ -466,8 +478,9 @@ class PMLoss(nn.Module):
 
     def _get_predictions_permutation_indices(self, indices):
         # Permute predictions following indices
-        batch_indices = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
-        predictions_indices = torch.cat([src for (src, _) in indices])
+        # 
+        batch_indices = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])   # t_0+t_1+...+t_(b-1) # 所谓对batch的索引
+        predictions_indices = torch.cat([src for (src, _) in indices])                               # t_0+t_1+...+t_(b-1) # 
         return batch_indices, predictions_indices
 
     def _get_targets_permutation_indices(self, indices):
@@ -511,7 +524,7 @@ class PMLoss(nn.Module):
         num_masks = self.get_num_masks(class_labels, device=class_labels[0].device)
         # get all the losses
         losses: Dict[str, Tensor] = {
-            # **self.loss_masks(masks_queries_logits, mask_labels, indices, num_masks),
+            **self.loss_masks(masks_queries_logits, mask_labels, indices, num_masks),
             **self.loss_labels(class_queries_logits, class_labels, indices),
         }
 

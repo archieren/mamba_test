@@ -1,7 +1,3 @@
-import os,sys
-sys.path.append(os.getcwd()) # 先这样!!!
-os.environ["TORCH_CUDA_ARCH_LIST"] = "6.0;6.1;6.2"
-
 import numpy as np
 import open3d as o3d
 import random
@@ -33,7 +29,9 @@ random.seed(seed)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
-print(Path.cwd())
+#参数：TODO
+epoches = 1
+batch_size = 1
 
 def time_it(start_time):
     stop_time = time.time()
@@ -42,7 +40,7 @@ def time_it(start_time):
 
 def bi_cls(x, *y):  # 没想明白*y！
     if x > 0 : return int(x)
-    else: return 0
+    else: return int(0)
 
 def collate_fn(batch, device):
     vertices=[]
@@ -81,16 +79,12 @@ def dataloader(split="train"):
     data_dir =Path.home().joinpath(datasets_root_name, dataset_id) # 终于搞成huggingface的那个样子，
     d = load_dataset(str(data_dir),split=split)   # load_dataset解释太多，这样也可以！
     d.set_format(type="numpy") # `[None, 'numpy', 'torch', 'tensorflow', 'pandas', 'arrow', 'jax']`
-    loader = DataLoader(d, batch_size=3, shuffle=True, collate_fn=collate_fn)
+    loader = DataLoader(d, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
     return loader
 
-#参数：TODO
-epoches = 1
 
-def time_it(start_time):
-    stop_time = time.time()
-    print("耗时: {:.2f}秒".format(stop_time - start_time))
-    return
+def loss_fn(pc):
+    return sum(pc.loss.values())
 
 def train():
     #Some Dir
@@ -99,7 +93,7 @@ def train():
     checkpoints_dir = exp_dir.joinpath('checkpoints/')
     checkpoints_dir.mkdir(exist_ok=True)
     checkpoints_file = checkpoints_dir.joinpath('model_weights.pth')
-    #train_loader = dataloader()
+    train_loader = dataloader()
     test_loader = dataloader(split="test")
     m_config = make_default_config()
     model = MODE_CLS(m_config)
@@ -109,16 +103,31 @@ def train():
     
     model= model.to(device)
     
+    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=5e-5)
+    
     for epoch in range(epoches):
-        for i, data in enumerate(test_loader):
-            start_time = time.time()   
-            pred=model(PointCloud(data))
-            print(pred.feat.shape)
-            if "loss" in pred.keys():
-                #print(pred.loss)
-                loss = sum(pred.loss.values())
-                print(loss)
-            time_it(start_time)
+        model= model.train()
+        loss_batch = []
+        with tqdm(test_loader) as t:  #
+            for i, data in enumerate(t):
+                optimizer.zero_grad()    
+                pc=model(PointCloud(data))
+                loss = loss_fn(pc)
+                loss.backward()                
+                optimizer.step()
+                loss_batch.append(loss.item())
+                t.set_description(f"Epoch {epoch+1}/{epoches}.Train_Loss:{loss.item():6f}")
+        mean_loss = np.mean(loss_batch)
+        print(f"Epoch_{epoch+1}/{epoches}'s meam_loss:{mean_loss}")
         
+        # model=model.eval()
+        # with torch.no_grad():        
+        #     with tqdm(test_loader) as t:
+        #         for i,data in enumerate(t):
+        #             pc = model(PointCloud(data))                      # prediction
+        #             t.set_description(f"Epoch {epoch}/{epoches}: Loss:{loss_fn(pc)}")
+        
+        torch.save(model.state_dict(), checkpoints_file)
+        print("Saved a checkpoints!")
 train()
 input()
