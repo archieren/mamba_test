@@ -7,7 +7,7 @@ from addict import Dict
 from flask import Flask
 from flask import request 
 from pathlib import Path
-from pm.pointmamba import PointSIS_SEG,PointSISFollowmlp_SEG, make_default_config
+from pm.pointmamba import PointSIS_SEG,PointSIS_Seg_Model, make_default_config
 from pm.utils.point_cloud import PointCloud
 
 device='cuda'

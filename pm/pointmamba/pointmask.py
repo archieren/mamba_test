@@ -22,7 +22,7 @@ class MaskPredictor(nn.Module):
 
     def forward(self, query:torch.Tensor, memory:torch.Tensor) -> Tuple[Tensor]:
         query_emb = self.query_mlp(query)                                            # b q d -> b q d
-        # TODO: 据说jit不友好,...
+        # TODO: 据说einsum对jit不友好,...
         predicated_mask = einsum(query_emb, memory, "b q d, b g d -> b q g ")                # b q d , b g d -> b q g
         attension_mask = predicated_mask.sigmoid().squeeze(1).repeat(1, self.nhead, 1, 1)   # b q g -> b h q g
         attension_mask = rearrange(attension_mask, " b h q g -> (b h) q g")          # 注意： torch.nn.MultiheadAttention的要求！！！ 原文实现用的是flatten(0,1) 

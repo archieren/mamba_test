@@ -130,7 +130,7 @@ class MixerLayers(nn.Module):
 
 
 
-class PointSIS_FollowMLP(nn.Module):
+class PointSIS_Feature_Extractor(nn.Module):
     def __init__(self, config:PointSISConfig):
         super().__init__()
         self.order = [config.order] if isinstance(config.order, str) else config.order
@@ -161,7 +161,7 @@ class PointSIS_FollowMLP(nn.Module):
         # s_意味着初始下采样，已经做了
         # TODO：后面的多尺度下采样，看情况再做！
         s_pc.serialization(order=self.order, shuffle_orders=self.shuffle_orders)        
-        s_feat  = s_pc.feat   # (b g) d
+        s_feat  = s_pc.feat   # (b g) N 3  
         s_coord = s_pc.coord   # (b g) 3
         s_order = s_pc.serialized_order   # o (b g)
         s_inverse = s_pc.serialized_inverse  # o (b g)      
@@ -169,14 +169,14 @@ class PointSIS_FollowMLP(nn.Module):
         b_s = s_pc.batch[-1]+1
         o_s = len(self.order)        
         # s_order, s_inverse 均为 order_size batch_size*num_group
-        s_coord = self.pos_encoder(s_coord)                # => (b g) d    # 每层共用这个位置编码！
+        s_coord = self.pos_encoder(s_coord)                # (b g) N 3 => (b g) d    # 每层共用这个位置编码！
         hidden_state = self.feature_encoder(s_feat)              # => (b g) d 
         hidden_states =[]
         for _ , mixlayer in enumerate(self.mixers):        
-            hidden_state = torch.cat([hidden_state, s_coord], dim= -1)               # => (b g) (d*2)  # 坐标的嵌入，应当不变！
+            hidden_state = torch.cat([hidden_state, s_coord], dim= -1)               # => (b g) (d*2)  # TODO: 每次融入坐标的嵌入，应当不变！
             hidden_state = self.fuse_e(hidden_state)                                 # 融合各编码 => (b g) d
-            hidden_state = hidden_state.unsqueeze(0).repeat(o_s,1,1)                 # 为每种排序准备排序的数据 => o (b g) d
-            hidden_state = torch_scatter.scatter(hidden_state,index=s_order, dim=1)  # 排序 => o (b g) d       
+            hidden_state = hidden_state.unsqueeze(0).repeat(o_s,1,1)                 # 为每种排序准备排序的数据,(b g) d => o (b g) d
+            hidden_state = torch_scatter.scatter(hidden_state,index=s_order, dim=1)  # 排序: o (b g) d, o (b g) => o (b g) d       
             hidden_state = rearrange(hidden_state, "o (b g) d -> b (o g) d", b=b_s)  # 将各个排序拼接,参看PointMamba的第四版!!
             hidden_state = mixlayer(hidden_state)                                    #  
             hidden_state = rearrange(hidden_state, "b (o g) d -> o (b g) d", o=o_s)  # 拆分各排序
@@ -240,33 +240,28 @@ class PointSIS_Encoder(nn.Module):
         return s_pc
 
 
-class PointSISFollowmlp_SEG(nn.Module):
+class PointSIS_Seg_Model(nn.Module):
     def __init__(self, config:PointSISConfig):
         super().__init__()
         self.grouper = Grouper_By_NumGroup(config.num_group, config.group_size)
-        self.pointsis_followmlp = PointSIS_FollowMLP(config)
+        self.pointsis_feature_extractor = PointSIS_Feature_Extractor(config)
         self.point_encoder = PointSIS_Encoder(config)
         self.mask_decoder = MaskDecoder(config)
-        # self.seg = nn.Sequential(
-        #     nn.Linear(config.d_model, config.d_model),
-        #     nn.GELU(),
-        #     nn.Linear(config.d_model, 2),
-        #     nn.Softmax(dim=-1)           
-        # )
-        self.class_predict = nn.Linear(config.d_model, config.num_labels+1)
-        self.feat_propagation = FeatPropagation(config.group_size)
-
+        #
         self.num_queries = config.num_queries
         self.query_embedder = nn.Embedding(config.num_queries, config.d_model)        # 可学习的查询！
         self.query_position_embedder = nn.Embedding(config.num_queries, config.d_model)   # TODO：位置也是可学习的？？？ Mask2Former就是如此！！！
-        
+        #
+        self.class_predict = nn.Linear(config.d_model, config.num_labels+1)
+        self.feat_propagation = FeatPropagation(config.group_size)
+        #        
         self.loss = PMLoss(config)
 
     def forward(self, parent_pc:PointCloud):
         #
         s_pc = self.grouper(parent_pc)
         #
-        s_pc = self.pointsis_followmlp(s_pc)
+        s_pc = self.pointsis_feature_extractor(s_pc)
         #
         s_pc = self.point_encoder(s_pc)
         b_s = s_pc.batch[-1]+1
@@ -289,7 +284,7 @@ class PointSISFollowmlp_SEG(nn.Module):
             parent_pc.loss = m_i
         pred_mask = rearrange(pred_mask,"b q g -> b g q")
         pred_mask = rearrange(pred_mask, "b g q -> (b g) q")
-        s_pc.feat = pred_mask.contiguous()       # TODO:老问题 s_pc的feat过载太多，看怎么清晰一下！！！
+        s_pc.feat = pred_mask.contiguous()       # TODO:老问题 s_pc的feat过载太多，看怎么清晰一下！！！ 这个contiguous还必须！
         feat = self.feat_propagation(parent_pc, s_pc)
         parent_pc.feat = feat
         parent_pc.pred_probs = pred_probs

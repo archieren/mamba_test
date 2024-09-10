@@ -231,13 +231,13 @@ def group_by_group_number_(xyz_pc:PointCloud,
     # s_ 解读为 samples, n_ 解读为neighbors, o_解读为ordered.
     # batch_size = xyz_pc.batch[-1] + 1
     s_offset = (torch.ones_like( xyz_pc.batch_bin)* num_group).cumsum(0).int() #[batch_size]
-    s_idx = fps(xyz_pc.coord, xyz_pc.offset, s_offset)  # [batch_size*num_group ]  # 幸亏这个fps
+    s_idx = fps(xyz_pc.coord, xyz_pc.offset, s_offset)  # [b g ]  # 幸亏这个fps
 
     # 此时 还不用考虑mesh提供的norm作为特征的提取基础，直接用坐标和临域关系来构造特征！
-    s_xyz  = xyz_pc.coord[s_idx]                                                     # [batch_size*num_group, coord's dim]
-    s_n_idx, _dist = knn(group_size, xyz_pc.coord, xyz_pc.offset, s_xyz,s_offset)    ## [batch_size*num_group, group_size ], _
-    s_n = xyz_pc.coord[s_n_idx]                                                      # [batch_size*num_group , group_size, coord's dim]
-    s_n = s_n - s_xyz.unsqueeze(1)                                                   # [batch_size*num_group , group_size, vector's dim]
+    s_xyz  = xyz_pc.coord[s_idx]                                                     # [b g, coord's dim]
+    s_n_idx, _dist = knn(group_size, xyz_pc.coord, xyz_pc.offset, s_xyz,s_offset)    ## [b g, group_size ], _
+    s_n = xyz_pc.coord[s_n_idx]                                                      # [b g , group_size, coord's dim]
+    s_n = s_n - s_xyz.unsqueeze(1)                                                   # [b g , group_size, vector's dim]
     s_n = s_n[:,1:, :]                                                               
     
     #排序,根据原有的SFC遍历序好,获得采样点的各总次序!
@@ -266,41 +266,50 @@ def group_by_ratio(parent_pc:PointCloud, group_size:int, ratio=0.1):
     from pointops import knn_query as knn
     from pointops import farthest_point_sampling as fps
     assert ratio > 0.05, "采样比例不能太小"
-    s_offset = torch.ceil(parent_pc.batch_bin * ratio).cumsum(0).int() # [batch_size]
-    s_idx = fps(parent_pc.coord, parent_pc.offset, s_offset)  # [batch_size*num_group ]  # 幸亏这个fps
+    s_offset = torch.ceil(parent_pc.batch_bin * ratio).cumsum(0).int() # b
+    s_idx = fps(parent_pc.coord, parent_pc.offset, s_offset)  # n_1+n_2+...+n_b  # 幸亏这个fps
 
     # 此时 还不用考虑mesh提供的norm作为特征的提取基础，直接用坐标和临域关系来构造特征！
-    s_xyz  = parent_pc.coord[s_idx]                                                        # [batch_size*num_group, coord's dim]
-    s_n_idx, _dist = knn(group_size, parent_pc.coord, parent_pc.offset, s_xyz,s_offset)    # [batch_size*num_group, group_size ], _
-    s_n = parent_pc.coord[s_n_idx]                                                         # [batch_size*num_group, group_size, coord's dim]
-    s_n = s_n - s_xyz.unsqueeze(1)                                                         # [batch_size*num_group, group_size, vector's dim]
+    s_xyz  = parent_pc.coord[s_idx]                                                        # n_1+n_2+...+n_b, 3
+    s_n_idx, _dist = knn(group_size, parent_pc.coord, parent_pc.offset, s_xyz,s_offset)    # n_1+n_2+...+n_b, N, _
+    s_n = parent_pc.coord[s_n_idx]                                                         # n_1+n_2+...+n_b, N, 3
+    s_n = s_n - s_xyz.unsqueeze(1)                                                         # n_1+n_2+...+n_b, N, 3
     #s_n = s_n[:,1:, :]                                                                    # TODO: 需不需要,去掉组内第一个vector? 不需要！从两个点集来看？
     
-    s_data = Dict(coord=s_xyz, 
+    if "labels" in parent_pc.keys():
+        s_lables = parent_pc.labels[s_idx]
+        s_data = Dict(coord=s_xyz, 
                   feat=s_n,
+                  labels=s_lables,
                   offset=s_offset,
                   grid_size=parent_pc.grid_size,                                            # 用父点云的grid_size
-                  index_back_to_parent=s_idx)                                               # 用于构造一个新的点集！
+                  index_back_to_parent=s_idx)
+    else:
+        s_data = Dict(coord=s_xyz, 
+                    feat=s_n,
+                    offset=s_offset,
+                    grid_size=parent_pc.grid_size,                                            # 用父点云的grid_size
+                    index_back_to_parent=s_idx)                                               # 用于构造一个新的点集！
     return PointCloud(s_data)
 
 @torch.no_grad()
 def group_by_group_number(parent_pc:PointCloud, 
-                   num_group:int,  # 分多少个组                  # 其实取多少点！
-                   group_size:int, # 组内多少个元素
+                   num_group:int,  # 分多少个组 g                 # 其实取多少点！
+                   group_size:int, # 组内多少个元素 N
                    ): 
     from pointops import knn_query as knn
     from pointops import farthest_point_sampling as fps
     # pointops方式 :按量,返回结果还包括距离
     # s_ 解读为 samples, n_ 解读为neighbors, o_解读为ordered.
     # batch_size = parent_pc.batch[-1] + 1
-    s_offset = (torch.ones_like( parent_pc.batch_bin)* num_group).cumsum(0).int() #[batch_size]
-    s_idx = fps(parent_pc.coord, parent_pc.offset, s_offset)  # [batch_size*num_group ]  # 幸亏这个fps
+    s_offset = (torch.ones_like( parent_pc.batch_bin)* num_group).cumsum(0).int() # b
+    s_idx = fps(parent_pc.coord, parent_pc.offset, s_offset)  # ( b g)  # 幸亏这个fps
 
     # 此时 还不用考虑mesh提供的norm作为特征的提取基础，直接用坐标和临域关系来构造特征！
-    s_xyz  = parent_pc.coord[s_idx]                                                        # [batch_size*num_group, coord's dim]
-    s_n_idx, _dist = knn(group_size, parent_pc.coord, parent_pc.offset, s_xyz,s_offset)    # [batch_size*num_group, group_size ], _
-    s_n = parent_pc.coord[s_n_idx]                                                         # [batch_size*num_group, group_size, coord's dim]
-    s_n = s_n - s_xyz.unsqueeze(1)                                                         # [batch_size*num_group, group_size, vector's dim]
+    s_xyz  = parent_pc.coord[s_idx]                                                        # (b g) 3]
+    s_n_idx, _dist = knn(group_size, parent_pc.coord, parent_pc.offset, s_xyz,s_offset)    # (b g) N, _
+    s_n = parent_pc.coord[s_n_idx]                                                         # (b g) N 3
+    s_n = s_n - s_xyz.unsqueeze(1)                                                         # (b g) N 3
 
     if "labels" in parent_pc.keys():
         s_lables = parent_pc.labels[s_idx]

@@ -12,13 +12,13 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 import pm.pointmamba as pms
-from pm.pointmamba import PointSISFollowmlp_SEG, make_default_config
+from pm.pointmamba import PointSIS_Seg_Model, make_default_config
 from pm.utils.point_cloud import PointCloud
 
 device='cuda'
 torch.device(device)
 
-MODE_CLS = PointSISFollowmlp_SEG  # PointSIS_SEG
+MODE_CLS = PointSIS_Seg_Model  # PointSIS_SEG
 
 seed = 42
 torch.manual_seed(seed)

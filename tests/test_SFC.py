@@ -185,7 +185,7 @@ def test_pointmlp():
     from pm.pointmlp import pointMLP
     import torch.autograd.profiler as profiler
 
-    B,C,N,Cls = 4,3,2048,16
+    B,C,N,Cls = 4,3,16384,16
     data = torch.rand(B,C,N).to(device)
     norm = torch.rand(B,C,N).to(device)
     cls_label = torch.rand([B, Cls]).to(device)
@@ -277,23 +277,23 @@ def test_point_sis():
         print("Load a saved model")
     model = model.to(device)
     #dc = make_data_dict(upper_stl_path="./assets/124_upper.stl",lower_stl_path="./assets/124_lower.stl")
+    dc = make_data_dict_(upper_stl_path="./assets/124_upper.stl")
     for i in range(10):
-        dc = make_data_dict_(upper_stl_path="./assets/124_upper.stl")
         start_time = time.time()
         sn = model(PointCloud(dc))
         time_it(start_time)
         print(sn.shape)
 
 
-def test_point_sis_FollowMLP():
+def test_point_sis_Seg_Model():
     import torch.autograd.profiler as profiler
 
     from pathlib import Path
     from torch.utils.cpp_extension import CUDA_HOME
 
-    from pm.pointmamba import PointSISFollowmlp_SEG, make_default_config
+    from pm.pointmamba import PointSIS_Seg_Model, make_default_config
     config = make_default_config()
-    model =PointSISFollowmlp_SEG(config).to(device)
+    model =PointSIS_Seg_Model(config).to(device)
     #dc = make_data_dict_(upper_stl_path="./assets/124_upper.stl",lower_stl_path="./assets/124_lower.stl")
     dc = make_data_dict_(upper_stl_path="./assets/124_upper.stl")
     for i in range(10):
@@ -454,8 +454,8 @@ def test_mask_predictor():
 # test_curvenet()
 
 # test_point_transformer()
-# test_point_sis()
-test_point_sis_FollowMLP()
+test_point_sis()
+test_point_sis_Seg_Model()
 # test_patch()
 # test_serializedpooling()
 # test_remote_pointsis()
