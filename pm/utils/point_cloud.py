@@ -6,6 +6,9 @@ from deprecated import deprecated
 from pm.sfc_serialization import encode
 from pm.utils.misc import offset2batch,batch2offset,offset2bincount
 
+from pointops import knn_query as knn
+from pointops import farthest_point_sampling as fps
+
 import spconv.pytorch as spconv
 
 class PointCloud(Dict):
@@ -204,114 +207,116 @@ def group_by_ratio_(xyz_pc:PointCloud, group_size:int, ratio=0.1):
         xyz_pc.batch_bin 应为[N1, N2,..., Nb]
         ---------------------------
     '''
-    from torch_geometric.nn import fps, knn
-    s_idx = fps(xyz_pc.coord, xyz_pc.batch, ratio=ratio)  # 样本点的index. 采样,样本点当作中心.
+    # from torch_geometric.nn import fps as fps_t
+    # from torch_geometric.nn import knn as  knn_t
+    from torch_cluster import fps as fps_t
+    from torch_cluster import knn as knn_t
+    s_idx = fps_t(xyz_pc.coord, xyz_pc.batch, ratio=ratio)  # 样本点的index. 采样,样本点当作中心.
     s_xyz  = xyz_pc.coord[s_idx]                # 样本点的坐标
     samples_batch = xyz_pc.batch[s_idx]           # 样本点的批号
-    patch_idx = knn(xyz_pc.coord, s_xyz, group_size,xyz_pc.batch, samples_batch)  # 很奇怪的一个返回结果!
+    patch_idx = knn_t(xyz_pc.coord, s_xyz, group_size,xyz_pc.batch, samples_batch)  # 很奇怪的一个返回结果!
     patch_idx = patch_idx[1].reshape((-1,group_size))
 
     return patch_idx, s_idx
 
 
-@torch.no_grad()
-@deprecated("这种返回结果的方式，不好！")
-def group_by_group_number_(xyz_pc:PointCloud, 
-                   num_group:int,  # 分多少个组                  # 其实取多少点！
-                   group_size:int, # 组内多少个元素
-                   ): 
-    # 不得不面临将点云都搞成传统的Batch模式!
-    # 序列分段的方式,是另一思路.先不考虑!
-    # 假设xyx_pc已经serialized!
-    # 这个地方很花了点时间.基本功不牢呀! index broadcasting 和 scatter_, gather的关系!
-    from pointops import knn_query as knn
-    from pointops import farthest_point_sampling as fps
+# @torch.no_grad()
+# @deprecated("这种返回结果的方式，不好！")
+# def group_by_group_number_(xyz_pc:PointCloud, 
+#                    num_group:int,  # 分多少个组                  # 其实取多少点！
+#                    group_size:int, # 组内多少个元素
+#                    ): 
+#     # 不得不面临将点云都搞成传统的Batch模式!
+#     # 序列分段的方式,是另一思路.先不考虑!
+#     # 假设xyx_pc已经serialized!
+#     # 这个地方很花了点时间.基本功不牢呀! index broadcasting 和 scatter_, gather的关系!
+#     from pointops import knn_query as knn
+#     from pointops import farthest_point_sampling as fps
     
-    # pointops方式 :按量,返回结果还包括距离
-    # s_ 解读为 samples, n_ 解读为neighbors, o_解读为ordered.
-    # batch_size = xyz_pc.batch[-1] + 1
-    s_offset = (torch.ones_like( xyz_pc.batch_bin)* num_group).cumsum(0).int() #[batch_size]
-    s_idx = fps(xyz_pc.coord, xyz_pc.offset, s_offset)  # [b g ]  # 幸亏这个fps
+#     # pointops方式 :按量,返回结果还包括距离
+#     # s_ 解读为 samples, n_ 解读为neighbors, o_解读为ordered.
+#     # batch_size = xyz_pc.batch[-1] + 1
+#     s_offset = (torch.ones_like( xyz_pc.batch_bin)* num_group).cumsum(0).int() #[batch_size]
+#     s_idx = fps(xyz_pc.coord, xyz_pc.offset, s_offset)  # [b g ]  # 幸亏这个fps
 
-    # 此时 还不用考虑mesh提供的norm作为特征的提取基础，直接用坐标和临域关系来构造特征！
-    s_xyz  = xyz_pc.coord[s_idx]                                                     # [b g, coord's dim]
-    s_n_idx, _dist = knn(group_size, xyz_pc.coord, xyz_pc.offset, s_xyz,s_offset)    ## [b g, group_size ], _
-    s_n = xyz_pc.coord[s_n_idx]                                                      # [b g , group_size, coord's dim]
-    s_n = s_n - s_xyz.unsqueeze(1)                                                   # [b g , group_size, vector's dim]
-    s_n = s_n[:,1:, :]                                                               
+#     # 此时 还不用考虑mesh提供的norm作为特征的提取基础，直接用坐标和临域关系来构造特征！
+#     s_xyz  = xyz_pc.coord[s_idx]                                                     # [b g, coord's dim]
+#     s_n_idx, _dist = knn(group_size, xyz_pc.coord, xyz_pc.offset, s_xyz,s_offset)    ## [b g, group_size ], _
+#     s_n = xyz_pc.coord[s_n_idx]                                                      # [b g , group_size, coord's dim]
+#     s_n = s_n - s_xyz.unsqueeze(1)                                                   # [b g , group_size, vector's dim]
+#     s_n = s_n[:,1:, :]                                                               
     
-    #排序,根据原有的SFC遍历序好,获得采样点的各总次序!
-    s_order = torch.argsort(xyz_pc.serialized_code[:, s_idx])                                           # 获得样本的各种序列吗, 种类排序! [order_s, batch_size * num_group]
-    src=torch.arange(0, s_order.shape[1], device=s_order.device).repeat(s_order.shape[0], 1)
-    s_inverse = torch.zeros_like(s_order, device=s_order.device).scatter_(dim=1,index=s_order,src=src,) # [order_s, batch_size * num_group]
-    # assert s_inverse[0, s_order[0, i]] == i
-    # s_idx[s_order].gather(1, s_inverse)- s_idx 等于零矩阵!!! 注意这个关系!!!
+#     #排序,根据原有的SFC遍历序好,获得采样点的各总次序!
+#     s_order = torch.argsort(xyz_pc.serialized_code[:, s_idx])                                           # 获得样本的各种序列吗, 种类排序! [order_s, batch_size * num_group]
+#     src=torch.arange(0, s_order.shape[1], device=s_order.device).repeat(s_order.shape[0], 1)
+#     s_inverse = torch.zeros_like(s_order, device=s_order.device).scatter_(dim=1,index=s_order,src=src,) # [order_s, batch_size * num_group]
+#     # assert s_inverse[0, s_order[0, i]] == i
+#     # s_idx[s_order].gather(1, s_inverse)- s_idx 等于零矩阵!!! 注意这个关系!!!
 
-    # s_o_xyz = s_xyz[s_order]      # [order_s, batch_size * num_group , coord's dim]
-    # s_o_n = s_n[s_order]          # [order_s, batch_size * num_group , group_size, coord's dim]
-    # return s_o_n, s_o_xyz, s_idx, s_xyz, s_order, s_inverse
+#     # s_o_xyz = s_xyz[s_order]      # [order_s, batch_size * num_group , coord's dim]
+#     # s_o_n = s_n[s_order]          # [order_s, batch_size * num_group , group_size, coord's dim]
+#     # return s_o_n, s_o_xyz, s_idx, s_xyz, s_order, s_inverse
 
-    # s_idx是样本和数据之间的对应桥梁!!!
-    return s_idx, s_n, s_xyz, s_order, s_inverse
+#     # s_idx是样本和数据之间的对应桥梁!!!
+#     return s_idx, s_n, s_xyz, s_order, s_inverse
 
+#下面两个函数的实现，实质就一行的区别。分开写，就是为了解释那些索引结构！
 @torch.no_grad()
 def group_by_ratio(parent_pc:PointCloud, group_size:int, ratio=0.1):  
     '''
         input: 
-        parent_pc.coord  shape 为 (N1+N2+.....+Nb) x 3.
-        parent_pc.batch  应当形如[N1s 0, N2s 1,..., Nbs (b-1)]
-        parent_pc.batch_bin 应为[N1, N2,..., Nb]
+            parent_pc.coord  shape 为 (N1+N2+.....+Nb) x 3.
+            parent_pc.batch  应当形如[N1s 0, N2s 1,..., Nbs (b-1)]
+            parent_pc.batch_bin 应为[N1, N2,..., Nb]
         ---------------------------
     '''
-    from pointops import knn_query as knn
-    from pointops import farthest_point_sampling as fps
+    # s_ 解读为 samples, n_ 解读为neighbors.
     assert ratio > 0.05, "采样比例不能太小"
     s_offset = torch.ceil(parent_pc.batch_bin * ratio).cumsum(0).int() # b
     s_idx = fps(parent_pc.coord, parent_pc.offset, s_offset)  # n_1+n_2+...+n_b  # 幸亏这个fps
 
-    # 此时 还不用考虑mesh提供的norm作为特征的提取基础，直接用坐标和临域关系来构造特征！
-    s_xyz  = parent_pc.coord[s_idx]                                                        # n_1+n_2+...+n_b, 3
-    s_n_idx, _dist = knn(group_size, parent_pc.coord, parent_pc.offset, s_xyz,s_offset)    # n_1+n_2+...+n_b, N, _
-    s_n = parent_pc.coord[s_n_idx]                                                         # n_1+n_2+...+n_b, N, 3
-    s_n = s_n - s_xyz.unsqueeze(1)                                                         # n_1+n_2+...+n_b, N, 3
-    #s_n = s_n[:,1:, :]                                                                    # TODO: 需不需要,去掉组内第一个vector? 不需要！从两个点集来看？
-    
-    if "labels" in parent_pc.keys():
-        s_lables = parent_pc.labels[s_idx]
-        s_data = Dict(coord=s_xyz, 
-                  feat=s_n,
-                  labels=s_lables,
-                  offset=s_offset,
-                  grid_size=parent_pc.grid_size,                                            # 用父点云的grid_size
-                  index_back_to_parent=s_idx)
-    else:
-        s_data = Dict(coord=s_xyz, 
-                    feat=s_n,
-                    offset=s_offset,
-                    grid_size=parent_pc.grid_size,                                            # 用父点云的grid_size
-                    index_back_to_parent=s_idx)                                               # 用于构造一个新的点集！
-    return PointCloud(s_data)
+    return __samples(parent_pc, s_idx, s_offset,group_size)
 
 @torch.no_grad()
 def group_by_group_number(parent_pc:PointCloud, 
                    num_group:int,  # 分多少个组 g                 # 其实取多少点！
                    group_size:int, # 组内多少个元素 N
-                   ): 
-    from pointops import knn_query as knn
-    from pointops import farthest_point_sampling as fps
-    # pointops方式 :按量,返回结果还包括距离
-    # s_ 解读为 samples, n_ 解读为neighbors, o_解读为ordered.
+                   ):
+    '''
+        input: 
+            parent_pc.coord  shape 为 (N1+N2+.....+Nb) x 3.
+            parent_pc.batch  应当形如[N1s 0, N2s 1,..., Nbs (b-1)]
+            parent_pc.batch_bin 应为[N1, N2,..., Nb]
+        ---------------------------
+    ''' 
+    # s_ 解读为 samples, n_ 解读为neighbors.
     # batch_size = parent_pc.batch[-1] + 1
     s_offset = (torch.ones_like( parent_pc.batch_bin)* num_group).cumsum(0).int() # b
-    s_idx = fps(parent_pc.coord, parent_pc.offset, s_offset)  # ( b g)  # 幸亏这个fps
+    s_idx = fps(parent_pc.coord, parent_pc.offset, s_offset)  # (b g)  # 幸亏这个fps
+    return __samples(parent_pc, s_idx, s_offset,group_size)
 
-    # 此时 还不用考虑mesh提供的norm作为特征的提取基础，直接用坐标和临域关系来构造特征！
-    s_xyz  = parent_pc.coord[s_idx]                                                        # (b g) 3]
-    s_n_idx, _dist = knn(group_size, parent_pc.coord, parent_pc.offset, s_xyz,s_offset)    # (b g) N, _
-    s_n = parent_pc.coord[s_n_idx]                                                         # (b g) N 3
-    s_n = s_n - s_xyz.unsqueeze(1)                                                         # (b g) N 3
+def __samples(parent_pc:PointCloud, s_idx:torch.Tensor, s_offset:torch.Tensor, group_size:int):
+    s_xyz  = parent_pc.coord[s_idx]                                                  # (b g) 3   or n_1+n_2+...+n_b 3
+    N = group_size                                                           
+    s_n_idx, _dist = knn(N, parent_pc.coord, parent_pc.offset, s_xyz,s_offset)       # (b g) N,_ or n_1+n_2+...+n_b N, _
+    # 由于__samples看起来只用一次，我假设 feat将会是 vertex_normals! 有normals，就用曲率！
+    if "feat" in parent_pc.keys():
+        s_feat = parent_pc.feat[s_idx]                                                        # (b g) 3 or n_1+n_2+...+n_b 3
+        s_n = parent_pc.feat[s_n_idx]                                                         # (b g) N 3 or n_1+n_2+...+n_b N 3
+        #这种形式,类似曲率.
+        s_n = s_n - s_feat.unsqueeze(1)                                                       # (b g) N 3 or n_1+n_2+...+n_b N 3  
+        # # 这种形式，直接算所谓的点曲率.
+        # # 所谓的 point_curvature, 先写到这。但我觉得上面那个应当也可以扑捉局部的平坦性了！
+        # # s_feat.unsqueeze(1).repeat(1, N, 1)  似乎可以不repeat！                                        
+        # point_curvature = __point_curvature(s_n, s_feat.unsqueeze(1))                         #  -> (b g) 1 or n_1+n_2+...+n_b 1
+        # s_n = torch.cat([s_feat, point_curvature], dim=-1)                                    #  (b g) 4 or n_1+n_2+...+n_b 4
+        
+    else:
+        s_n = parent_pc.coord[s_n_idx]                                                         # (b g) N 3 or n_1+n_2+...+n_b N 3
+        # 这种搞法，类似梯度
+        s_n = s_n - s_xyz.unsqueeze(1)                                                         # (b g) N 3 or n_1+n_2+...+n_b N 3 
 
-    if "labels" in parent_pc.keys():
+    if "labels" in parent_pc.keys():                                                           # 如果是有训练的数据
         s_lables = parent_pc.labels[s_idx]
         s_data = Dict(coord=s_xyz, 
                   feat=s_n,
@@ -326,3 +331,14 @@ def group_by_group_number(parent_pc:PointCloud,
                     grid_size=parent_pc.grid_size,                                            # 用父点云的grid_size
                     index_back_to_parent=s_idx)                                               # 用于构造一个新的点集！
     return PointCloud(s_data)
+
+def __point_curvature(a, b, dim=-1):                                                           
+    # 不知出处！
+    # 看文章 How Futile are Mindless Assessments of Roundoff in Floating-Point Computation? §12: Mangled Angles
+    a_norm = a.norm(dim=dim, keepdim=True)
+    b_norm = b.norm(dim=dim, keepdim=True)
+    angles =  2 * torch.atan2(
+        (a * b_norm - a_norm * b).norm(dim=dim),
+        (a * b_norm + a_norm * b).norm(dim=dim)
+    )
+    return angles.mean(dim=dim, keepdim=True)

@@ -30,7 +30,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 #参数：TODO
-epoches = 1
+epoches = 10
 batch_size = 1
 
 def time_it(start_time):
@@ -44,29 +44,29 @@ def bi_cls(x, *y):  # 没想明白*y！
 
 def collate_fn(batch, device):
     vertices=[]
-    # normals=[]
+    normals=[]
     offset = []
     labels = []
     for example in batch:
-        # oral_scan = o3d.geometry.TriangleMesh()
-        # oral_scan.vertices  = o3d.utility.Vector3dVector(example["vertices"])
-        # oral_scan.triangles = o3d.utility.Vector3iVector(example["triangles"])
-        # oral_scan.compute_vertex_normals()
-        # vertex_normals = np.asarray(oral_scan.vertex_normals)    # TODO：制做数据集时去处理， 这儿就省事了！
+        oral_scan = o3d.geometry.TriangleMesh()
+        oral_scan.vertices  = o3d.utility.Vector3dVector(example["vertices"])
+        oral_scan.triangles = o3d.utility.Vector3iVector(example["triangles"])
+        oral_scan.compute_vertex_normals()
+        vertex_normals = np.asarray(oral_scan.vertex_normals)    # TODO：制做数据集时去处理， 这儿就省事了！
 
         vertices.append(torch.tensor(example["vertices"], dtype=torch.float))
-        # normals.append(torch.tensor(vertex_normals, dtype=torch.float))
+        normals.append(torch.tensor(vertex_normals, dtype=torch.float))
         offset.append(example["vertices"].shape[0])
         label = torch.tensor(example["label"])
         label = label.map_(label,bi_cls)
         labels.append(label)
     
     vertices = torch.cat(vertices).cuda(device)
-    # normals  = torch.cat(normals).cuda(device)
+    normals  = torch.cat(normals).cuda(device)
     labels   = torch.cat(labels).cuda(device)
     offset = torch.tensor(offset, device=device).cumsum(0).int()
     return Dict(coord=vertices,
-                #feat=normals, 
+                feat=normals, 
                 labels=labels, 
                 offset=offset, 
                 grid_size=1.0e-2)

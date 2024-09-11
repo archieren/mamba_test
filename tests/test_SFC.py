@@ -11,7 +11,7 @@ from addict import Dict
 from pathlib import Path
 from pm.utils.misc import offset2batch,batch2offset
 from pm.sfc_serialization import encode
-from pm.utils.point_cloud import PointCloud,group_by_group_number,group_by_ratio
+from pm.utils.point_cloud import PointCloud,group_by_group_number,group_by_ratio,group_by_ratio_
 
 
 
@@ -143,13 +143,20 @@ def test_PointCloud():
     print(pc.sparse_conv_feat.batch_size)
 
 def test_grouping_by_ratio():
+    from ctypes.util import find_library
     pc = make_PointCloud()
     pc.serialization()
+    # for i in range(3):
+    #     print(f"Grouping_by_ratio_with_torch_cluster:{i}")
+    #     start_time = time.time()
+    #     s_pc = group_by_ratio_(pc,7, ratio=0.08) # (1024*)
+    #     time_it(start_time)
     for i in range(3):
-        print(i)
+        print(f"Grouping_by_ratio_with_pointops:{i}")
         start_time = time.time()
         s_pc = group_by_ratio(pc,7, ratio=0.08) # (1024*)
         time_it(start_time)
+
 
 def test_grouping_by_fps():
     pc = make_PointCloud()
@@ -447,15 +454,15 @@ def test_mask_predictor():
 
 
 # test_PointCloud()
-# test_grouping_by_ratio()
+test_grouping_by_ratio()
 # test_grouping_by_fps()
 # test_fps_pointnet2()
 # test_pointmlp()
 # test_curvenet()
 
 # test_point_transformer()
-test_point_sis()
-test_point_sis_Seg_Model()
+# test_point_sis()
+# test_point_sis_Seg_Model()
 # test_patch()
 # test_serializedpooling()
 # test_remote_pointsis()
