@@ -1,8 +1,13 @@
+import os,sys
+sys.path.append(os.getcwd()) # 先这样!!!
+os.environ["TORCH_CUDA_ARCH_LIST"] = "6.0;6.1;6.2"
+
 import numpy as np
 import open3d as o3d
 import random
 import time
 import torch
+import torch.nn as nn
 
 from addict import Dict
 from datasets import load_dataset
@@ -47,6 +52,7 @@ def collate_fn(batch, device):
     normals=[]
     offset = []
     labels = []
+    triangles = []
     for example in batch:
         oral_scan = o3d.geometry.TriangleMesh()
         oral_scan.vertices  = o3d.utility.Vector3dVector(example["vertices"])
@@ -56,16 +62,19 @@ def collate_fn(batch, device):
 
         vertices.append(torch.tensor(example["vertices"], dtype=torch.float))
         normals.append(torch.tensor(vertex_normals, dtype=torch.float))
+        triangles.append(torch.tensor(example["triangles"], dtype=torch.int))
         offset.append(example["vertices"].shape[0])
         label = torch.tensor(example["label"])
         label = label.map_(label,bi_cls)
         labels.append(label)
     
+    triangles = torch.cat(triangles).cuda(device)
     vertices = torch.cat(vertices).cuda(device)
     normals  = torch.cat(normals).cuda(device)
     labels   = torch.cat(labels).cuda(device)
     offset = torch.tensor(offset, device=device).cumsum(0).int()
     return Dict(coord=vertices,
+                triangles=triangles,
                 feat=normals, 
                 labels=labels, 
                 offset=offset, 
@@ -83,51 +92,66 @@ def dataloader(split="train"):
     return loader
 
 
-def loss_fn(pc):
-    return sum(pc.loss.values())
+exp_dir = Path('./log/')
+exp_dir.mkdir(exist_ok=True)
+checkpoints_dir = exp_dir.joinpath('checkpoints/')
+checkpoints_dir.mkdir(exist_ok=True)
+checkpoints_file = checkpoints_dir.joinpath('model_weights.pth')
+test_loader = dataloader(split="test")
+m_config = make_default_config()
+model = MODE_CLS(m_config)
 
-def train():
-    #Some Dir
-    exp_dir = Path('./log/')
-    exp_dir.mkdir(exist_ok=True)
-    checkpoints_dir = exp_dir.joinpath('checkpoints/')
-    checkpoints_dir.mkdir(exist_ok=True)
-    checkpoints_file = checkpoints_dir.joinpath('model_weights.pth')
-    train_loader = dataloader()
-    test_loader = dataloader(split="test")
-    m_config = make_default_config()
-    model = MODE_CLS(m_config)
-    if checkpoints_file.exists():
-        model.load_state_dict(torch.load(checkpoints_file))
-        print("Load a saved model")
+model.load_state_dict(torch.load(checkpoints_file))
+print("Load a saved model")
+
+model= model.to(device)
+
+colors_t = [[[0.8, 0.2, 0.4]],
+          [[0.9, 0.2, 0.8]]]
+
+def fetch_colors(i:int,feat, pred_index):
+    a_pred_mask = feat[:, pred_index].transpose(1,0)
+    colors = a_pred_mask[i].detach().sigmoid().unsqueeze(1).repeat(1, 3)
+    v = torch.tensor(colors_t[i%2], device=colors.device)
+    colors = (colors*v).cpu().numpy()
+    return colors
+
+l_m = nn.LogSoftmax(dim=-1)
+for i, data in enumerate(test_loader): 
+    start_time = time.time()  
+    pc =model(PointCloud(data))
+    time_it(start_time)
+    feat = pc.feat
+    pred_probs = pc.pred_probs
+    pred_index = l_m(pc.pred_probs)
+    pred_index = torch.argmax(pred_index,dim=-1)
+    pred_index = pred_index.squeeze(0).nonzero().view(-1)
+    print(pred_index.shape)
+    points = pc.coord.cpu().numpy()
+    triangles = pc.triangles.cpu().numpy()
+
+    #print(colors.shape)
+    colors_1 = fetch_colors(5, feat=feat, pred_index=pred_index)
+    t_1 = o3d.geometry.PointCloud()
+    t_1.points = o3d.utility.Vector3dVector(points)
+    t_1.colors = o3d.utility.Vector3dVector(colors_1)
+
+    # colors_2 = fetch_colors(10, feat=feat, pred_index=pred_index)
+    # t_2 = o3d.geometry.PointCloud()
+    # t_2.points = o3d.utility.Vector3dVector(points)
+    # t_2.colors = o3d.utility.Vector3dVector(colors_2)
+
+    oral_scan = o3d.geometry.TriangleMesh()
+    oral_scan.vertices  = o3d.utility.Vector3dVector(points)
+    oral_scan.triangles = o3d.utility.Vector3iVector(triangles)
+    oral_scan.compute_vertex_normals()
+
+    # t.paint_uniform_color([0.75,1, 0])
+    o3d.visualization.draw_geometries([t_1, oral_scan])
+
     
-    model= model.to(device)
-    
-    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=5e-5)
-    
-    for epoch in range(epoches):
-        model= model.train()
-        loss_batch = []
-        with tqdm(test_loader) as t:  #
-            for i, data in enumerate(t):
-                optimizer.zero_grad()    
-                pc=model(PointCloud(data))
-                loss = loss_fn(pc)
-                loss.backward()                
-                optimizer.step()
-                loss_batch.append(loss.item())
-                t.set_description(f"Epoch {epoch+1}/{epoches}.Train_Loss:{loss.item():6f}")
-        mean_loss = np.mean(loss_batch)
-        print(f"Epoch_{epoch+1}/{epoches}'s meam_loss:{mean_loss}")
         
-        # model=model.eval()
-        # with torch.no_grad():        
-        #     with tqdm(test_loader) as t:
-        #         for i,data in enumerate(t):
-        #             pc = model(PointCloud(data))                      # prediction
-        #             t.set_description(f"Epoch {epoch}/{epoches}: Loss:{loss_fn(pc)}")
+
         
-        torch.save(model.state_dict(), checkpoints_file)
-        print("Saved a checkpoints!")
-train()
-input()
+
+

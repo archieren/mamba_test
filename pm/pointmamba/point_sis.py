@@ -97,6 +97,7 @@ class SwinMixers(nn.Module):        # 这儿，对Patch，进行飘移操作，�
 
         return hidden_states    
 
+# 事实上，这里的Grouper,Feature_Encoder,Pos_Encoder可以溯源到DGCNN,即EdgeConv的路子.
 class Grouper(nn.Module):
     def __init__(self, group_ratio, group_size):
         super().__init__()

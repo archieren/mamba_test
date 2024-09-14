@@ -260,7 +260,8 @@ def group_by_ratio_(xyz_pc:PointCloud, group_size:int, ratio=0.1):
 #     # s_idx是样本和数据之间的对应桥梁!!!
 #     return s_idx, s_n, s_xyz, s_order, s_inverse
 
-#下面两个函数的实现，实质就一行的区别。分开写，就是为了解释那些索引结构！
+# 下面两个函数的实现，实质就一行的区别。分开写，就是为了解释那些索引结构！
+# 事实上,这两个函数可以扩展...
 @torch.no_grad()
 def group_by_ratio(parent_pc:PointCloud, group_size:int, ratio=0.1):  
     '''
@@ -295,26 +296,27 @@ def group_by_group_number(parent_pc:PointCloud,
     s_idx = fps(parent_pc.coord, parent_pc.offset, s_offset)  # (b g)  # 幸亏这个fps
     return __samples(parent_pc, s_idx, s_offset,group_size)
 
-def __samples(parent_pc:PointCloud, s_idx:torch.Tensor, s_offset:torch.Tensor, group_size:int):
+def __samples(parent_pc:PointCloud, s_idx:torch.Tensor, s_offset:torch.Tensor, group_size:int) -> torch.Tensor:
     s_xyz  = parent_pc.coord[s_idx]                                                  # (b g) 3   or n_1+n_2+...+n_b 3
     N = group_size                                                           
     s_n_idx, _dist = knn(N, parent_pc.coord, parent_pc.offset, s_xyz,s_offset)       # (b g) N,_ or n_1+n_2+...+n_b N, _
+
+    s_n = parent_pc.coord[s_n_idx]                                                         # (b g) N 3 or n_1+n_2+...+n_b N 3
+    # 这种搞法，类似梯度
+    # s_n = s_n - s_xyz.unsqueeze(1)                                                         # (b g) N 3 or n_1+n_2+...+n_b N 3 
+    # s_n = torch.cat([s_xyz.unsqueez(1), s_n], dim= 1)                                        # (b g) (N+1) 3 or n_1+n_2+...+n_b (N+1) 3
     # 由于__samples看起来只用一次，我假设 feat将会是 vertex_normals! 有normals，就用曲率！
     if "feat" in parent_pc.keys():
         s_feat = parent_pc.feat[s_idx]                                                        # (b g) 3 or n_1+n_2+...+n_b 3
-        s_n = parent_pc.feat[s_n_idx]                                                         # (b g) N 3 or n_1+n_2+...+n_b N 3
-        #这种形式,类似曲率.
-        s_n = s_n - s_feat.unsqueeze(1)                                                       # (b g) N 3 or n_1+n_2+...+n_b N 3  
-        # # 这种形式，直接算所谓的点曲率.
-        # # 所谓的 point_curvature, 先写到这。但我觉得上面那个应当也可以扑捉局部的平坦性了！
-        # # s_feat.unsqueeze(1).repeat(1, N, 1)  似乎可以不repeat！                                        
+        s_n_feat = parent_pc.feat[s_n_idx]                                                         # (b g) N 3 or n_1+n_2+...+n_b N 3
+        s_n = torch.cat([s_n, s_feat.unsqueeze(1), s_n_feat], dim= 1)                              #  (b g) (2N+1) 3 or n_1+n_2+...+n_b (2N+1) 3
+        # #这种形式,类似曲率.
+        # s_n = s_n - s_feat.unsqueeze(1)                                                       # (b g) N 3 or n_1+n_2+...+n_b N 3  
+        # 这种形式，直接算所谓的点曲率.
+        # 所谓的 point_curvature, 先写到这。但我觉得上面那个应当也可以扑捉局部的平坦性了！
+        # s_feat.unsqueeze(1).repeat(1, N, 1)  似乎可以不repeat！                                        
         # point_curvature = __point_curvature(s_n, s_feat.unsqueeze(1))                         #  -> (b g) 1 or n_1+n_2+...+n_b 1
         # s_n = torch.cat([s_feat, point_curvature], dim=-1)                                    #  (b g) 4 or n_1+n_2+...+n_b 4
-        
-    else:
-        s_n = parent_pc.coord[s_n_idx]                                                         # (b g) N 3 or n_1+n_2+...+n_b N 3
-        # 这种搞法，类似梯度
-        s_n = s_n - s_xyz.unsqueeze(1)                                                         # (b g) N 3 or n_1+n_2+...+n_b N 3 
 
     if "labels" in parent_pc.keys():                                                           # 如果是有训练的数据
         s_lables = parent_pc.labels[s_idx]
@@ -331,14 +333,3 @@ def __samples(parent_pc:PointCloud, s_idx:torch.Tensor, s_offset:torch.Tensor, g
                     grid_size=parent_pc.grid_size,                                            # 用父点云的grid_size
                     index_back_to_parent=s_idx)                                               # 用于构造一个新的点集！
     return PointCloud(s_data)
-
-def __point_curvature(a, b, dim=-1):                                                           
-    # 不知出处！
-    # 看文章 How Futile are Mindless Assessments of Roundoff in Floating-Point Computation? §12: Mangled Angles
-    a_norm = a.norm(dim=dim, keepdim=True)
-    b_norm = b.norm(dim=dim, keepdim=True)
-    angles =  2 * torch.atan2(
-        (a * b_norm - a_norm * b).norm(dim=dim),
-        (a * b_norm + a_norm * b).norm(dim=dim)
-    )
-    return angles.mean(dim=dim, keepdim=True)

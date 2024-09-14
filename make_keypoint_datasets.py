@@ -40,64 +40,55 @@ def collect_group(source_dir:Path, stems:list[str]):
     label_c =[]
     name_c = []
     for stem in stems:        
-        mesh, label_ = get_labeled_data(source_dir, stem)
-        label_keys = list(label_.keys())               # {"tooth-id"-> [index_of_vertex]}
+        mesh, label_ori = get_labeled_data(source_dir, stem)
 
         vertices = np.asarray(mesh.vertices,dtype=float)
         triangles = np.asarray(mesh.triangles,dtype=int)
+        seg_labels = label_ori["seg"]                  # "seg"->{"tooth-id"-> [index_of_vertex]}
+        key_point_labels = label_ori["kp"]             # "kp" ->{"tooth_id"-> {"keypoint_name" -> [index_of_vertex]}}
+
         label = np.zeros((vertices.shape[0],), dtype=int) #dtype=np.dtype('b'))
-        for label_key in label_keys:
-            label[label_[label_key]] = int(label_key)     # 
+        for tooth_id in list(seg_labels.keys()):
+            label[seg_labels[tooth_id]] = int(tooth_id)     # 
         vertices_c.append(vertices)
         triangles_c.append(triangles)
         label_c.append(label)
         name_c.append(stem)
 
+        for tooth_id in list(key_point_labels.keys()):
+            keypoints=[]
+            for keypoint_name in list(key_point_labels[tooth_id].keys()):
+                keypoints += key_point_labels[tooth_id][keypoint_name]
+            keypoints = np.asarray(keypoints)
+            keypoints = np.unique(keypoints)
+            print(f"{tooth_id}: {keypoints.shape}")
+
     return {"vertices":vertices_c, "triangles":triangles_c,"label":label_c,"name":name_c}
-
-## 这种流式方式，似乎不太好？  当然，也可行？
-# def gen_(source_dir:Path):
-#     for stl_item in source_dir.glob("*.stl"):
-#         stem = stl_item.stem
-#         mesh, label_ = get_labeled_data(source_dir, stem)
-#         label_keys = list(label_.keys())
-
-#         vertices = np.asarray(mesh.vertices,dtype=float)
-#         triangles = np.asarray(mesh.triangles,dtype=int)
-#         label = np.zeros((vertices.shape[0],), dtype=int) #dtype=np.dtype('b'))
-#         for label_key in label_keys:
-#             label[label_[label_key]] = int(label_key)
-#         yield {"vertices":vertices, "triangles":triangles,"label":label,"name":stem}    
-
-
-# def make_parquet(source_dir:Path, out_name="test.parquet"):  
-#     from datasets import Dataset,IterableDataset
-#     d = Dataset.from_generator(gen_, gen_kwargs={"source_dir":source_dir})    
-#     d.to_parquet(out_name)
 
 def make_parquet_(source_dir:Path, out_dir="data", group_size = 400,clx="train"):
     import math
     from datasets import Dataset
     stems=[ stl_item.stem for stl_item in source_dir.glob("*.stl")]
     total_examples = len(stems)
+    print(total_examples)
     group_size = group_size
     file_numbers = math.ceil(total_examples/group_size)
     for i in range(file_numbers):
         stems_part = stems[group_size*i:group_size*(i+1)]
         data_d = collect_group(source_dir, stems_part)
-        d = Dataset.from_dict(data_d)
-        # TODO dataset-name-train-0000-of-0004.parquet
-        out_name = f"{out_dir}/{clx}-oralscan-part-{i:04}-of-{file_numbers:04}.parquet"
-        d.to_parquet(out_name)
+        # d = Dataset.from_dict(data_d)
+        # # TODO dataset-name-train-0000-of-0004.parquet
+        # out_name = f"{out_dir}/{clx}-oralscan-part-{i:04}-of-{file_numbers:04}.parquet"
+        # d.to_parquet(out_name)
 
 def make_test_dataset():
-    source_dir= Path("/home/archie/Projects/data/口扫模型/牙齿分割标注数据---/牙齿分割10个-ns")
+    source_dir= Path("/home/archie/Projects/data/口扫模型/模型测量关键点---/测试数据")
     out_dir="zby/oral_scan/data"
-    group_size = 4
+    group_size = 100
     make_parquet_(source_dir=source_dir,out_dir=out_dir,group_size=group_size,clx="test")
 
 def make_train_dataset():
-    source_dir= Path("/home/archie/Projects/data/口扫模型/牙齿分割标注数据---/标注数据")
+    source_dir= Path("/home/archie/Projects/data/口扫模型/模型测量关键点---/标注数据")
     out_dir="zby/oral_scan/data"
     group_size = 400
     make_parquet_(source_dir=source_dir,out_dir=out_dir,group_size=group_size, clx="train")    
@@ -119,41 +110,6 @@ def enumerate_example(ex):
     o3d.visualization.draw_geometries([ pointSet, s_mesh])
 
 
-
-
-def noop():
-    from datasets import load_dataset, Dataset, IterableDataset
-    from torch.utils.data import DataLoader
-    ## Method 1
-    # data_dir = Path.cwd()/'zby'/'oral_scan'/'data'
-    # data_files={'train': [str(t) for t in data_dir.glob("*.parquet")]}
-    # d = load_dataset("parquet", data_files=data_files,split="train")
-    data_dir = Path.cwd()/'zby'/'oral_scan'         # 注意，没有‘data’这一项！！！
-    d = load_dataset(str(data_dir),split="test")   # load_dataset解释太多，这样也可以！
-    d.set_format(type="numpy")
-    print(d)
-    example = d[1]
-    enumerate_example(example)
-
-def noop_():
-    from datasets import load_dataset, Dataset, IterableDataset
-    from torch.utils.data import DataLoader
-    ## Method 2
-    data_dir = Path.cwd()/'zby'/'oral_scan'/'data'
-    data_files={'test': [str(t) for t in data_dir.glob("*.parquet")]}
-    d = Dataset.from_parquet(data_files,split='test')
-    d.set_format(type='torch')
-    d.shuffle(seed=21)
-    # for idx, batch in enumerate([234, 120, 1800]):
-    #     print(idx)
-    #     print(d[batch]['vertices'].shape)
-    #     print(d[batch]['name'])
-    #     enumerate_example(d[batch])
-    for idx, batch in enumerate(d):
-        max_v = batch['vertices'].shape[0] if max_v < batch['vertices'].shape[0] else max_v
-        print(batch['name'])
-        # enumerate_example(batch)    
-
 def noop_ok():
     from datasets import load_dataset
     from torch.utils.data import DataLoader
@@ -166,9 +122,9 @@ def noop_ok():
     example = d[2222]
     enumerate_example(example)
 
-make_train_dataset()
+# make_train_dataset()
 make_test_dataset()
 # noop()
 # noop_()
-#noop_ok()
+# noop_ok()
 

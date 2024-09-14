@@ -3,6 +3,31 @@ import math
 from dataclasses import dataclass, asdict
 from typing import Union,List
 
+teeth_num = {18,17,16,15,14,13,12,11,
+            28,27,26,25,24,23,22,21,
+            38,37,36,35,34,33,32,31,
+            48,47,46,45,44,43,42,41}
+
+kp_name_cls =   {'buccal':1, 
+                'buccal-cusp':2, 
+                'contact':3, 
+                'dental-cusp':4,
+                'edge':5,
+                'fossa':6,
+                'lingual':7,
+                'lingual-cusp':8,
+                'groove':9}
+
+kp_cls_name =   {1:'buccal', 
+                2:'buccal-cusp', 
+                3:'contact', 
+                4:'dental-cusp',
+                5:'edge',
+                6:'fossa',
+                7:'lingual',
+                8:'lingual-cusp',
+                9:'groove'}
+
 @dataclass
 class Mamba1Config:     # 抄自 Mamba1的初始化参数!!!
 

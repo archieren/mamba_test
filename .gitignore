@@ -1,5 +1,6 @@
 **/__pycache__/
 **/*.npz
 **/*.pyc
+zby/
 old_tests/
 log/

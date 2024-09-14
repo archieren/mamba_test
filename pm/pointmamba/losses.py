@@ -218,10 +218,10 @@ class DiceLoss(nn.Module):
     
 
 
-teeth = {17,16,15,14,13,12,11,
-         27,26,25,24,23,22,21,
-         37,36,35,34,33,32,31,
-         47,46,45,44,43,42,41}
+teeth = {18,17,16,15,14,13,12,11,
+         28,27,26,25,24,23,22,21,
+         38,37,36,35,34,33,32,31,
+         48,47,46,45,44,43,42,41}
 
 #各种辅助！！ 
 def tooth_lables(labels:torch.Tensor) -> List[torch.Tensor]: # b g -> [t,...], [t g,...]  
@@ -490,7 +490,7 @@ class PMLoss(nn.Module):
         return batch_indices, target_indices
 
     def get_num_masks(self, 
-                      class_labels: torch.Tensor,             # [t,...]    len_of_list: b
+                      class_labels: torch.Tensor,              # [t,...]    len_of_list: b
                       device: torch.device) -> torch.Tensor:
         """
         计算一批数据中，应当有多少个掩码.

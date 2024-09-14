@@ -19,6 +19,16 @@ from pm.pointmamba.pointmask import MaskDecoder
 from pm.utils.point_cloud import PointCloud, group_by_group_number
 from pointops import interpolation2
 
+def point_curvature(a, b, dim=-1):                                                           
+    # 不知出处！
+    # 看文章 How Futile are Mindless Assessments of Roundoff in Floating-Point Computation? §12: Mangled Angles
+    a_norm = a.norm(dim=dim, keepdim=True)
+    b_norm = b.norm(dim=dim, keepdim=True)
+    angles =  2 * torch.atan2(
+        (a * b_norm - a_norm * b).norm(dim=dim),
+        (a * b_norm + a_norm * b).norm(dim=dim)
+    )
+    return angles.mean(dim=dim, keepdim=True)
 
 class Grouper_By_NumGroup(nn.Module):   # TODO：这个应当改名。采样的时候，还生成了Feature！
     def __init__(self, num_group, group_size):
@@ -26,11 +36,21 @@ class Grouper_By_NumGroup(nn.Module):   # TODO：这个应当改名。采样的�
         self.num_group = num_group
         self.group_size = group_size
     
-    def forward(self, pc:PointCloud):
-        return group_by_group_number(pc, self.num_group, self.group_size)
+    def forward(self, pc:PointCloud)-> PointCloud:
+        G, N = self.num_group, self.group_size
+        s_pc = group_by_group_number(pc, G, N)
+        temp_feat = s_pc.feat                                       # BG (2N+1) 3
+        s_feat   = temp_feat[:, N, :]                                 # BG 3
+        n_feat   = temp_feat[:, (N+1):, :]                            # BG N 3
+        # 所谓的 point_curvature, 先写到这。可以扑捉局部的平坦性了！
+        # s_feat.unsqueeze(1).repeat(1, N, 1)  似乎可以不repeat！ 
+        p_curvature = point_curvature(n_feat, s_feat.unsqueeze(1)) # BG 1
+        s_n  = torch.cat([s_feat, p_curvature], dim=-1)            # BG 4
+        s_pc.feat = s_n
+        del temp_feat
+        return s_pc
 
-
-class Feature_Encoder(nn.Module):        # 改自Point Mamba！
+class Feature_Encoder__(nn.Module):        # 改自Point Mamba！
     def __init__(self, encoder_channel):
         super().__init__()
         self.e_o = encoder_channel       # 特征编码输出的通道数！
@@ -64,6 +84,23 @@ class Feature_Encoder(nn.Module):        # 改自Point Mamba！
         feature_global = torch.max(feature, dim=1, keepdim=False)[0]  # BG N C -> BG C
         return feature_global
 
+class Feature_Encoder(nn.Module):  # 位置也编码!! 先放到这，肯定要修改的！
+    def __init__(self, encoder_channel):
+        super().__init__()
+        self.e_o = encoder_channel
+        self.e_i = 128
+        self.encoder = nn.Sequential(
+            nn.Linear(4, self.e_i *2),   # 如果换成SparseConv的化,就是所谓的xCPE！ See PVT3
+            nn.GELU(),
+            nn.Linear(self.e_i * 2, self.e_o)            
+        )
+    
+    def forward(self, pos):
+        """
+        BG 4 -> BG C
+        """
+        return self.encoder(pos)
+    
 class Pos_Encoder(nn.Module):  # 位置也编码!! 先放到这，肯定要修改的！
     def __init__(self, encoder_channel):
         super().__init__()
