@@ -131,7 +131,7 @@ for i, data in enumerate(test_loader):
     triangles = pc.triangles.cpu().numpy()
 
     #print(colors.shape)
-    colors_1 = fetch_colors(5, feat=feat, pred_index=pred_index)
+    colors_1 = fetch_colors(6, feat=feat, pred_index=pred_index)
     t_1 = o3d.geometry.PointCloud()
     t_1.points = o3d.utility.Vector3dVector(points)
     t_1.colors = o3d.utility.Vector3dVector(colors_1)
@@ -147,6 +147,7 @@ for i, data in enumerate(test_loader):
     oral_scan.compute_vertex_normals()
 
     # t.paint_uniform_color([0.75,1, 0])
+    o3d.visualization.draw_geometries([oral_scan])
     o3d.visualization.draw_geometries([t_1, oral_scan])
 
     

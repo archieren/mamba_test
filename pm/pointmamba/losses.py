@@ -12,6 +12,7 @@ from einops import rearrange,einsum
 from scipy.optimize import linear_sum_assignment
 from typing import Dict, List, Optional, Tuple
 from pm.pointmamba.conifuguration_point_sis import  PointSISConfig
+from pm.pointmamba.conifuguration_point_sis import TEETH_NUM as TEETH
 
 class CrossEntropyLoss(nn.Module):
     def __init__(
@@ -216,13 +217,6 @@ class DiceLoss(nn.Module):
         loss = total_loss / num_classes
         return self.loss_weight * loss
     
-
-
-teeth = {18,17,16,15,14,13,12,11,
-         28,27,26,25,24,23,22,21,
-         38,37,36,35,34,33,32,31,
-         48,47,46,45,44,43,42,41}
-
 #各种辅助！！ 
 def tooth_lables(labels:torch.Tensor) -> List[torch.Tensor]: # b g -> [t,...], [t g,...]  
     b_s = labels.shape[0]
@@ -230,14 +224,23 @@ def tooth_lables(labels:torch.Tensor) -> List[torch.Tensor]: # b g -> [t,...], [
     b_mask_labels  = []
     for b in range(b_s):
         masks = []
-        for i in teeth:
+        for i in TEETH:
             x = torch.where(labels[b]==i,1,0)
             if x.sum() > 0 :
                 x = x.unsqueeze(0)
                 masks.append(x)
-        num_target = len(masks)   # TODO:需要检查 num_target>0
+        #       
+        non_tooth_mask = torch.where(labels[b]>0, 0, 1).unsqueeze(0)
+        masks.append(non_tooth_mask)
+        all_tooth_mask = torch.where(labels[b]>0, 1, 0).unsqueeze(0)
+        masks.append(all_tooth_mask)
+
+        num_target = len(masks)    # TODO:需要检查 num_target>1,报数据训练错！
         class_labels = torch.ones(num_target, device=labels.device).long()       #  t        # TODO: t个目标, 每个目标都是标签1
+        class_labels[-1] = 3                                                     # TODO：确认一下所有牙齿单独作一类行不？
+        class_labels[-2] = 2                                                     # TODO:确认一下牙龈单独作一类行不？
         b_class_labels.append(class_labels)
+
         mask_labels = torch.cat(masks, dim=0).float()                             # t g      # TODO: 每个目标, 都有一个掩码！
         b_mask_labels.append(mask_labels)
     return b_class_labels, b_mask_labels
@@ -352,16 +355,13 @@ class PMHungarianMatcher(nn.Module):
         for i in range(batch_size):
             pred_probs = class_queries_logits[i].softmax(-1)        # -> q l
             pred_mask = masks_queries_logits[i]                     # -> q g
-            
             #Class cost
             # Compute the classification cost. Contrary to the loss, we don't use the NLL, but approximate it in 1 - proba[target class]. The 1 is a constant that doesn't change the matching, it can be ommitted.
             cost_class = -pred_probs[:, class_labels[i]]               # 理解这里,class_labels[i]作为索引,所起的作用?  q l, t -> q t
-
             # Mask cost
             target_mask = mask_labels[i].to(pred_mask)                 # t g
             # compute the cross entropy loss between each mask pairs -> shape (num_queries, num_labels)
             cost_mask = pair_wise_sigmoid_cross_entropy_loss(pred_mask, target_mask)  # q g, t g -> q t
-
             # Dice loss
             # Compute the dice loss betwen each mask pairs -> shape (num_queries, num_labels)
             cost_dice = pair_wise_dice_loss(pred_mask, target_mask)                   # q g, t g -> q t
