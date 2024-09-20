@@ -103,7 +103,8 @@ def train():
     
     model= model.to(device)
     
-    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=5e-5)
+    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[20,100,300,], gamma=0.1)
     
     for epoch in range(epoches):
         model= model.train()
@@ -116,7 +117,8 @@ def train():
                 loss.backward()                
                 optimizer.step()
                 loss_batch.append(loss.item())
-                t.set_description(f"Epoch {epoch+1}/{epoches}.Train_Loss:{loss.item():6f}")
+                t.set_description(f"Epoch {epoch+1}/{epoches} : Train_Loss:{loss.item():6f} LearningRate:{optimizer.param_groups[0]['lr']}")
+        scheduler.step()
         mean_loss = np.mean(loss_batch)
         print(f"Epoch_{epoch+1}/{epoches}'s meam_loss:{mean_loss}")
         

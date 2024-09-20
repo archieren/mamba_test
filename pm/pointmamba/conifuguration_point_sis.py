@@ -3,10 +3,15 @@ import math
 from dataclasses import dataclass, asdict
 from typing import Union,List
 
-TEETH_NUM = {18,17,16,15,14,13,12,11,
-            28,27,26,25,24,23,22,21,
-            38,37,36,35,34,33,32,31,
-            48,47,46,45,44,43,42,41}
+TEETH_num = {18,17,16,15,14,13,12,11,
+             28,27,26,25,24,23,22,21,
+             38,37,36,35,34,33,32,31,
+             48,47,46,45,44,43,42,41}
+
+TEETH_num_cls = {18: 8,17: 7,16: 6,15: 6,14: 4,13: 3,12: 2,11: 1,
+                 28:16,27:15,26:14,25:13,24:12,23:11,22:10,21: 9,
+                 38:24,37:23,36:22,35:21,34:20,33:19,32:18,31:17,
+                 48:32,47:31,46:30,45:29,44:28,43:27,42:26,41:25}
 
 kp_name_cls =   {'buccal':1, 
                 'buccal-cusp':2, 
@@ -85,8 +90,8 @@ class PointSISConfig():
         dim_feedforward:     int = 2048
         num_feature_levels:  int = 3
         num_decode_layers:   int = int(num_feature_levels*3)
-        num_labels:          int = 3           # 目前，只有三类 单个teeth，所有tooth，牙龈
-        num_queries:         int = 35 #  >  7*4 + 1  
+        num_labels:          int = 34           # 目前，只有34类 单个teeth，所有tooth，牙龈
+        num_queries:         int = 64           # 35 #  >  7*4 + 1  
         dropout:             float = 0.1
         ## About loss
         class_weight:        float = 2.0

@@ -12,7 +12,8 @@ from einops import rearrange,einsum
 from scipy.optimize import linear_sum_assignment
 from typing import Dict, List, Optional, Tuple
 from pm.pointmamba.conifuguration_point_sis import  PointSISConfig
-from pm.pointmamba.conifuguration_point_sis import TEETH_NUM as TEETH
+from pm.pointmamba.conifuguration_point_sis import TEETH_num as TEETH
+from pm.pointmamba.conifuguration_point_sis import TEETH_num_cls
 
 class CrossEntropyLoss(nn.Module):
     def __init__(
@@ -223,22 +224,24 @@ def tooth_lables(labels:torch.Tensor) -> List[torch.Tensor]: # b g -> [t,...], [
     b_class_labels = []
     b_mask_labels  = []
     for b in range(b_s):
+        class_labels = []
         masks = []
         for i in TEETH:
             x = torch.where(labels[b]==i,1,0)
             if x.sum() > 0 :
                 x = x.unsqueeze(0)
                 masks.append(x)
+                cls = TEETH_num_cls[i]
+                class_labels.append(cls)
         #       
-        non_tooth_mask = torch.where(labels[b]>0, 0, 1).unsqueeze(0)
+        non_tooth_mask = torch.where(labels[b]>0, 0, 1).unsqueeze(0)             # 牙龈
         masks.append(non_tooth_mask)
-        all_tooth_mask = torch.where(labels[b]>0, 1, 0).unsqueeze(0)
+        class_labels.append(33)
+        all_tooth_mask = torch.where(labels[b]>0, 1, 0).unsqueeze(0)             # 所有牙齿
         masks.append(all_tooth_mask)
+        class_labels.append(34)
 
-        num_target = len(masks)    # TODO:需要检查 num_target>1,报数据训练错！
-        class_labels = torch.ones(num_target, device=labels.device).long()       #  t        # TODO: t个目标, 每个目标都是标签1
-        class_labels[-1] = 3                                                     # TODO：确认一下所有牙齿单独作一类行不？
-        class_labels[-2] = 2                                                     # TODO:确认一下牙龈单独作一类行不？
+        class_labels = torch.tensor(class_labels, device= labels.device).long()    # t   
         b_class_labels.append(class_labels)
 
         mask_labels = torch.cat(masks, dim=0).float()                             # t g      # TODO: 每个目标, 都有一个掩码！
