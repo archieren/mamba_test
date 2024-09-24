@@ -14,7 +14,7 @@ from mamba_ssm.modules.mamba_simple import Mamba
 # 这需要看片文章"On Layer Normalization in the Transformer Architecture"
 from mamba_ssm.modules.block import Block 
 from pm.pointmamba.conifuguration_point_sis import Mamba1Config, PointSISConfig
-from pm.pointmamba.losses import PMLoss,tooth_lables
+from pm.pointmamba.losses import PMLoss
 from pm.pointmamba.pointmask import MaskDecoder
 from pm.utils.point_cloud import PointCloud, group_by_group_number
 from pointops import interpolation2

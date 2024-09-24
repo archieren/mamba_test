@@ -1,4 +1,5 @@
 import math
+import torch
 
 from dataclasses import dataclass, asdict
 from typing import Union,List
@@ -8,10 +9,79 @@ TEETH_num = {18,17,16,15,14,13,12,11,
              38,37,36,35,34,33,32,31,
              48,47,46,45,44,43,42,41}
 
-TEETH_num_cls = {18: 8,17: 7,16: 6,15: 6,14: 4,13: 3,12: 2,11: 1,
-                 28:16,27:15,26:14,25:13,24:12,23:11,22:10,21: 9,
-                 38:24,37:23,36:22,35:21,34:20,33:19,32:18,31:17,
-                 48:32,47:31,46:30,45:29,44:28,43:27,42:26,41:25}
+TEETH_num_cls = {18: 8,
+                 17: 7,
+                 16: 6,
+                 15: 5,
+                 14: 4,
+                 13: 3,
+                 12: 2,
+                 11: 1,
+                 28:16,
+                 27:15,
+                 26:14,
+                 25:13,
+                 24:12,
+                 23:11,
+                 22:10,
+                 21: 9,
+                 38:24,
+                 37:23,
+                 36:22,
+                 35:21,
+                 34:20,
+                 33:19,
+                 32:18,
+                 31:17,
+                 48:32,
+                 47:31,
+                 46:30,
+                 45:29,
+                 44:28,
+                 43:27,
+                 42:26,
+                 41:25}
+
+TEETH_cls_num = { 8:18,
+                  7:17,
+                  6:16,
+                  5:15,
+                  4:14,
+                  3:13,
+                  2:12,
+                  1:11,
+                 16:28,
+                 15:27,
+                 14:26,
+                 13:25,
+                 12:24,
+                 11:23,
+                 10:22,
+                  9:21,
+                 24:38,
+                 23:37,
+                 22:36,
+                 21:35,
+                 20:34,
+                 19:33,
+                 18:32,
+                 17:31,
+                 32:48,
+                 31:47,
+                 30:46,
+                 29:45,
+                 28:44,
+                 27:43,
+                 26:42,
+                 25:41}
+
+superior_gingival = 33
+inferior_gingival = 34
+
+superior_dentition= 35
+inferior_dentition= 36
+
+all_classes = 36
 
 kp_name_cls =   {'buccal':1, 
                 'buccal-cusp':2, 
@@ -32,6 +102,44 @@ kp_cls_name =   {1:'buccal',
                 7:'lingual',
                 8:'lingual-cusp',
                 9:'groove'}
+
+#各种辅助！！ 
+def tooth_lables(labels:torch.Tensor) -> List[torch.Tensor]: # b g -> [t,...], [t g,...] 
+    """
+    将编号标签形式转成分类形式
+    """ 
+    b_s = labels.shape[0]
+    b_class_labels = []
+    b_mask_labels  = []
+    for b in range(b_s):
+        class_labels = []
+        masks = []
+        up_or_low = "unknown"
+        for i in TEETH_num:
+            x = torch.where(labels[b]==i,1,0)
+            if x.sum() > 0 :                           # 有这个牙齿的标签！
+                x = x.unsqueeze(0)
+                masks.append(x)
+                cls = TEETH_num_cls[i]                 # 牙编号 -> Class!
+                class_labels.append(cls)
+                up_or_low="up" if i%10 < 2 else "low"  # 有点浪费, TODO:how?
+        #       
+        non_tooth_mask = torch.where(labels[b]>0, 0, 1).unsqueeze(0)             # 牙龈
+        if non_tooth_mask.sum()>0:
+           masks.append(non_tooth_mask)
+           class_labels.append(superior_gingival if up_or_low == "up" else inferior_gingival)
+
+        all_tooth_mask = torch.where(labels[b]>0, 1, 0).unsqueeze(0)             # 所有牙齿
+        if all_tooth_mask.sum()> 0:
+            masks.append(all_tooth_mask)
+            class_labels.append(superior_dentition if up_or_low == "up" else inferior_dentition)
+
+        class_labels = torch.tensor(class_labels, device= labels.device).long()    # t   
+        b_class_labels.append(class_labels)
+
+        mask_labels = torch.cat(masks, dim=0).float()                             # t g      # TODO: 每个目标, 都有一个掩码！
+        b_mask_labels.append(mask_labels)
+    return b_class_labels, b_mask_labels
 
 @dataclass
 class Mamba1Config:     # 抄自 Mamba1的初始化参数!!!
@@ -90,8 +198,8 @@ class PointSISConfig():
         dim_feedforward:     int = 2048
         num_feature_levels:  int = 3
         num_decode_layers:   int = int(num_feature_levels*3)
-        num_labels:          int = 34           # 目前，只有34类 单个teeth，所有tooth，牙龈
-        num_queries:         int = 64           # 35 #  >  7*4 + 1  
+        num_labels:          int =  all_classes
+        num_queries:         int = 64             
         dropout:             float = 0.1
         ## About loss
         class_weight:        float = 2.0

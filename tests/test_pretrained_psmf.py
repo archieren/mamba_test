@@ -118,6 +118,7 @@ def fetch_colors(i:int,feat, pred_index):
 
 l_m = nn.LogSoftmax(dim=-1)
 for i, data in enumerate(test_loader): 
+    if i > 1: break
     start_time = time.time()  
     pc =model(PointCloud(data))
     time_it(start_time)
@@ -129,6 +130,7 @@ for i, data in enumerate(test_loader):
     print(pred_index.shape)
     points = pc.coord.cpu().numpy()
     triangles = pc.triangles.cpu().numpy()
+    print(points.shape,triangles.shape)
 
     #print(colors.shape)
     colors_1 = fetch_colors(6, feat=feat, pred_index=pred_index)

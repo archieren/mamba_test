@@ -11,9 +11,7 @@ from torch import Tensor
 from einops import rearrange,einsum
 from scipy.optimize import linear_sum_assignment
 from typing import Dict, List, Optional, Tuple
-from pm.pointmamba.conifuguration_point_sis import  PointSISConfig
-from pm.pointmamba.conifuguration_point_sis import TEETH_num as TEETH
-from pm.pointmamba.conifuguration_point_sis import TEETH_num_cls
+from pm.pointmamba.conifuguration_point_sis import  PointSISConfig, tooth_lables
 
 class CrossEntropyLoss(nn.Module):
     def __init__(
@@ -129,14 +127,10 @@ class FocalLoss(nn.Module):
         Returns:
             torch.Tensor: The calculated loss
         """
-        # [B, C, d_1, d_2, ..., d_k] -> [C, B, d_1, d_2, ..., d_k]
-        pred = pred.transpose(0, 1)
-        # [C, B, d_1, d_2, ..., d_k] -> [C, N]
-        pred = pred.reshape(pred.size(0), -1)
-        # [C, N] -> [N, C]
-        pred = pred.transpose(0, 1).contiguous()
-        # (B, d_1, d_2, ..., d_k) --> (B * d_1 * d_2 * ... * d_k,)
-        target = target.view(-1).contiguous()
+        pred = pred.transpose(0, 1)                        # [B, C, d_1, d_2, ..., d_k] -> [C, B, d_1, d_2, ..., d_k]
+        pred = pred.reshape(pred.size(0), -1)              # [C, B, d_1, d_2, ..., d_k] -> [C, N]
+        pred = pred.transpose(0, 1).contiguous()           # [C, N] -> [N, C]
+        target = target.view(-1).contiguous()              # (B, d_1, d_2, ..., d_k) --> (B * d_1 * d_2 * ... * d_k,)
         assert pred.size(0) == target.size(0), "The shape of pred doesn't match the shape of target"
         valid_mask = target != self.ignore_index
         target = target[valid_mask]
@@ -182,14 +176,10 @@ class DiceLoss(nn.Module):
         self.ignore_index = ignore_index
 
     def forward(self, pred, target, **kwargs):
-        # [B, C, d_1, d_2, ..., d_k] -> [C, B, d_1, d_2, ..., d_k]
-        pred = pred.transpose(0, 1)
-        # [C, B, d_1, d_2, ..., d_k] -> [C, N]
-        pred = pred.reshape(pred.size(0), -1)
-        # [C, N] -> [N, C]
-        pred = pred.transpose(0, 1).contiguous()
-        # (B, d_1, d_2, ..., d_k) --> (B * d_1 * d_2 * ... * d_k,)
-        target = target.view(-1).contiguous()
+        pred = pred.transpose(0, 1)                   # [B, C, d_1, d_2, ..., d_k] -> [C, B, d_1, d_2, ..., d_k]
+        pred = pred.reshape(pred.size(0), -1)         # [C, B, d_1, d_2, ..., d_k] -> [C, N]
+        pred = pred.transpose(0, 1).contiguous()      # [C, N] -> [N, C]
+        target = target.view(-1).contiguous()         # (B, d_1, d_2, ..., d_k) --> (B * d_1 * d_2 * ... * d_k,)
         assert pred.size(0) == target.size(
             0
         ), "The shape of pred doesn't match the shape of target"
@@ -217,36 +207,7 @@ class DiceLoss(nn.Module):
                 total_loss += dice_loss
         loss = total_loss / num_classes
         return self.loss_weight * loss
-    
-#各种辅助！！ 
-def tooth_lables(labels:torch.Tensor) -> List[torch.Tensor]: # b g -> [t,...], [t g,...]  
-    b_s = labels.shape[0]
-    b_class_labels = []
-    b_mask_labels  = []
-    for b in range(b_s):
-        class_labels = []
-        masks = []
-        for i in TEETH:
-            x = torch.where(labels[b]==i,1,0)
-            if x.sum() > 0 :
-                x = x.unsqueeze(0)
-                masks.append(x)
-                cls = TEETH_num_cls[i]
-                class_labels.append(cls)
-        #       
-        non_tooth_mask = torch.where(labels[b]>0, 0, 1).unsqueeze(0)             # 牙龈
-        masks.append(non_tooth_mask)
-        class_labels.append(33)
-        all_tooth_mask = torch.where(labels[b]>0, 1, 0).unsqueeze(0)             # 所有牙齿
-        masks.append(all_tooth_mask)
-        class_labels.append(34)
-
-        class_labels = torch.tensor(class_labels, device= labels.device).long()    # t   
-        b_class_labels.append(class_labels)
-
-        mask_labels = torch.cat(masks, dim=0).float()                             # t g      # TODO: 每个目标, 都有一个掩码！
-        b_mask_labels.append(mask_labels)
-    return b_class_labels, b_mask_labels
+##-----------以上参考的是 pointcept/models/losses/misc.py 中的内容.不适合Mask2Former里使用！
 
 def sigmoid_cross_entropy_loss(inputs: torch.Tensor, labels: torch.Tensor, num_masks: int) -> torch.Tensor:
     r"""
@@ -260,7 +221,7 @@ def sigmoid_cross_entropy_loss(inputs: torch.Tensor, labels: torch.Tensor, num_m
     Returns:
         loss (`torch.Tensor`): The computed loss.
     """
-    criterion = nn.BCEWithLogitsLoss(reduction="none")
+    criterion = nn.BCEWithLogitsLoss(reduction="none")       # 在mask内，实质上作的是二分类！有pos_weigths,就会成为某种Focal_Loss
     cross_entropy_loss = criterion(inputs, labels)
 
     loss = cross_entropy_loss.mean(1).sum() / num_masks
@@ -287,6 +248,35 @@ def dice_loss(inputs: Tensor, labels: Tensor, num_masks: int) -> Tensor:
     loss = 1 - (numerator + 1) / (denominator + 1)
     loss = loss.sum() / num_masks
     return loss
+
+def focal_loss(inputs: torch.Tensor, labels: torch.Tensor, num_masks: int, alpha=0.25,gamma=2,reduction = "none",) -> torch.Tensor:
+    r"""
+    Args:
+        inputs (`torch.Tensor`):
+            A tensor representing a mask.
+        labels (`torch.Tensor`):
+            A tensor with the same shape as inputs. Stores the binary classification labels for each element in inputs
+            (0 for the negative class and 1 for the positive class).
+        num_masks (`int`):
+            The number of masks present in the current batch, used for normalization.
+
+    Returns:
+        `torch.Tensor`: The computed loss.    
+    """
+    # TODO:妈的，先这样，不知对不对！
+    p = torch.sigmoid(inputs)
+    ce_loss = F.binary_cross_entropy_with_logits(inputs, labels, reduction="none") # 在mask内，实质上作的是二分类！有pos_weigths,就会成为某种Focal_Loss
+ 
+    p_t = p * labels + (1 - p) * (1 - labels)     # p * (1 - p) == labels * (1 - lbaels) == 0
+    loss = ce_loss * ((1 - p_t) ** gamma)
+
+    if alpha >= 0:
+        alpha_t = alpha * labels + (1 - alpha) * (1 - labels)
+        loss = alpha_t * loss
+
+    loss = loss.mean(1).sum() / num_masks
+    return loss
+    
 
 # Copied from transformers.models.maskformer.modeling_maskformer.pair_wise_dice_loss
 def pair_wise_dice_loss(inputs: Tensor, labels: Tensor) -> Tensor:
@@ -339,9 +329,9 @@ class PMHungarianMatcher(nn.Module):
         self,
         masks_queries_logits: torch.Tensor,          # b q g
         class_queries_logits: torch.Tensor,          # b q l
-        mask_labels: List[torch.Tensor],             # [t g,...],  len_of_list: b
-        class_labels: List[torch.Tensor],            # [t,...] , len_of_list: b
-    ) -> List[Tuple[Tensor]]:                        # [(t, t),...] , len_of_list: b
+        mask_labels: List[torch.Tensor],             # [t_0 g,...],  len_of_list: b
+        class_labels: List[torch.Tensor],            # [t_0,...] , len_of_list: b
+    ) -> List[Tuple[Tensor]]:                        # [(t_0, t_0),...] , len_of_list: b
         """
         Returns:
             matched_indices (`List[Tuple[Tensor]]`): A list of size batch_size, containing tuples of (index_i, index_j)
@@ -418,8 +408,8 @@ class PMLoss(nn.Module):
 
     def loss_labels(self, 
                     class_queries_logits: Tensor,     # b q l
-                    class_labels: List[Tensor],       # [t,...]       len_of_list: b
-                    indices: Tuple[np.array],         # [(t, t),...]  len_of_list: b
+                    class_labels: List[Tensor],       # [t_0,...]       len_of_list: b
+                    indices: Tuple[np.array],         # [(t_0, t_0),...]  len_of_list: b
                     ) -> Dict[str, Tensor]: 
         """Compute the losses related to the labels using cross entropy.
         Returns:
@@ -431,7 +421,7 @@ class PMLoss(nn.Module):
         criterion = nn.CrossEntropyLoss(weight=self.empty_weight)
         # 下面这段,要注意各种索引技巧！！！
         # idx==(batch_indices, prediction_indices), shape为(t_0+t_1+...+t_(b-1), t_0+t_1+...+t_(b-1)).索引出了t_0+t_1+...+t_(b-1)个位置！
-        idx = self._get_predictions_permutation_indices(indices)  
+        idx = self._get_predictions_permutation_indices(indices) 
         target_classes_o = torch.cat([target[indices_tgt] for target, (_, indices_tgt) in zip(class_labels, indices)])  #  -> t_0+t_1+...+t_(b-1)
         # TODO: fill_value是0还是self.num_labels!
         target_classes = torch.full((batch_size, num_queries), fill_value=0, dtype=target_classes_o.dtype, device=pred_logits.device)  # b q
@@ -448,7 +438,7 @@ class PMLoss(nn.Module):
 
     def loss_masks(self,
         masks_queries_logits: torch.Tensor,    # b q g
-        mask_labels: List[torch.Tensor],       # [t g,...]  len_of_list: b
+        mask_labels: List[torch.Tensor],       # [t_0 g,...]  len_of_list: b
         indices: Tuple[np.array],
         num_masks: int,
     ) -> Dict[str, torch.Tensor]:
@@ -467,12 +457,12 @@ class PMLoss(nn.Module):
         #
         pred_masks = masks_queries_logits[src_idx]  # ->(t_0+t_1+...+t_(b-1), g)
         target_masks = torch.cat([target[target_indices] for target, (_, target_indices) in zip(mask_labels, indices)])
-        # print(target_masks.shape)
-        # target_masks = mask_labels[tgt_idx]         # 
+        # target_masks = mask_labels[tgt_idx]         # TODO:想想！
 
         losses = {
             "loss_mask": sigmoid_cross_entropy_loss(pred_masks, target_masks, num_masks),
             "loss_dice": dice_loss(pred_masks, target_masks, num_masks),
+            "loss_focal":focal_loss(pred_masks,target_masks,num_masks),
         }
 
         del pred_masks
@@ -493,7 +483,7 @@ class PMLoss(nn.Module):
         return batch_indices, target_indices
 
     def get_num_masks(self, 
-                      class_labels: torch.Tensor,              # [t,...]    len_of_list: b
+                      class_labels: torch.Tensor,              # [t_0,...]    len_of_list: b
                       device: torch.device) -> torch.Tensor:
         """
         计算一批数据中，应当有多少个掩码.
