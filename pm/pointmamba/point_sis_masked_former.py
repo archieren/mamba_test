@@ -19,16 +19,6 @@ from pm.pointmamba.pointmask import MaskDecoder
 from pm.utils.point_cloud import PointCloud, group_by_group_number
 from pointops import interpolation2
 
-def point_curvature(a, b, dim=-1):                                                           
-    # 不知出处！
-    # 看文章 How Futile are Mindless Assessments of Roundoff in Floating-Point Computation? §12: Mangled Angles
-    a_norm = a.norm(dim=dim, keepdim=True)
-    b_norm = b.norm(dim=dim, keepdim=True)
-    angles =  2 * torch.atan2(
-        (a * b_norm - a_norm * b).norm(dim=dim),
-        (a * b_norm + a_norm * b).norm(dim=dim)
-    )
-    return angles.mean(dim=dim, keepdim=True)
 
 class Grouper_By_NumGroup(nn.Module):   # TODO：这个应当改名。采样的时候，还生成了Feature！
     def __init__(self, num_group, group_size):
@@ -39,50 +29,41 @@ class Grouper_By_NumGroup(nn.Module):   # TODO：这个应当改名。采样的�
     def forward(self, pc:PointCloud)-> PointCloud:
         G, N = self.num_group, self.group_size
         s_pc = group_by_group_number(pc, G, N)
-        temp_feat = s_pc.feat                                       # BG (2N+1) 3
-        s_feat   = temp_feat[:, N, :]                                 # BG 3
-        n_feat   = temp_feat[:, (N+1):, :]                            # BG N 3
-        # 所谓的 point_curvature, 先写到这。可以扑捉局部的平坦性了！
-        # s_feat.unsqueeze(1).repeat(1, N, 1)  似乎可以不repeat！ 
-        p_curvature = point_curvature(n_feat, s_feat.unsqueeze(1)) # BG 1
-        s_n  = torch.cat([s_feat, p_curvature], dim=-1)            # BG 4
-        s_pc.feat = s_n
-        del temp_feat
         return s_pc
 
-class Feature_Encoder__(nn.Module):        # 改自Point Mamba！
-    def __init__(self, encoder_channel):
-        super().__init__()
-        self.e_o = encoder_channel       # 特征编码输出的通道数！
-        self.e_i = 128                   # 特征编码内部使用的通道数！
-        self.first_conv = nn.Sequential(
-            nn.Linear(3,self.e_i),       # TODO:3
-            nn.LayerNorm(self.e_i),
-            nn.GELU(),                       
-            nn.Linear(self.e_i, self.e_i *2)
-        )
-        self.second_conv = nn.Sequential(
-            nn.Linear(self.e_i *4, self.e_i *4),
-            nn.LayerNorm(self.e_i *4 ),
-            nn.GELU(),
-            nn.Linear(self.e_i *4, self.e_o)
-        )
+# class Feature_Encoder__(nn.Module):        # 改自Point Mamba！
+#     def __init__(self, encoder_channel):
+#         super().__init__()
+#         self.e_o = encoder_channel       # 特征编码输出的通道数！
+#         self.e_i = 128                   # 特征编码内部使用的通道数！
+#         self.first_conv = nn.Sequential(
+#             nn.Linear(3,self.e_i),       # TODO:3
+#             nn.LayerNorm(self.e_i),
+#             nn.GELU(),                       
+#             nn.Linear(self.e_i, self.e_i *2)
+#         )
+#         self.second_conv = nn.Sequential(
+#             nn.Linear(self.e_i *4, self.e_i *4),
+#             nn.LayerNorm(self.e_i *4 ),
+#             nn.GELU(),
+#             nn.Linear(self.e_i *4, self.e_o)
+#         )
 
-    def forward(self, feature):
-        '''
-            point_groups : BG N 3  ( N 邻居的数量)
-            -----------------
-            feature_global : BG C
-        '''
-        BG, N, C = feature.shape
-        # encoder                                                     # 
-        feature = self.first_conv(feature)                            # BG N 3  -> BG N e_i*2 
-        feature_global = torch.max(feature, dim=1, keepdim=True)[0]   # BG N e_i*2 -> BG 1 e_i*2  # 为什么是max?
-        feature_global = feature_global.expand(-1, N, -1)             # BG 1 e_i*2 -> BG N e_i*2
-        feature = torch.cat([feature, feature_global], dim=-1)        # BG N e_i*2 BG N e_i*2  -> BG N e_i*4
-        feature = self.second_conv(feature)                           # BG N e_i*4 -> BG N C
-        feature_global = torch.max(feature, dim=1, keepdim=False)[0]  # BG N C -> BG C
-        return feature_global
+#     def forward(self, feature):
+#         '''
+#             point_groups : BG N 3  ( N 邻居的数量)
+#             -----------------
+#             feature_global : BG C
+#         '''
+#         BG, N, C = feature.shape
+#         # encoder                                                     # 
+#         feature = self.first_conv(feature)                            # BG N 3  -> BG N e_i*2 
+#         feature_global = torch.max(feature, dim=1, keepdim=True)[0]   # BG N e_i*2 -> BG 1 e_i*2  # 为什么是max?
+#         feature_global = feature_global.expand(-1, N, -1)             # BG 1 e_i*2 -> BG N e_i*2
+#         feature = torch.cat([feature, feature_global], dim=-1)        # BG N e_i*2 BG N e_i*2  -> BG N e_i*4
+#         feature = self.second_conv(feature)                           # BG N e_i*4 -> BG N C
+#         feature_global = torch.max(feature, dim=1, keepdim=False)[0]  # BG N C -> BG C
+#         return feature_global
 
 class Feature_Encoder(nn.Module):  # 位置也编码!! 先放到这，肯定要修改的！
     def __init__(self, encoder_channel):
@@ -317,7 +298,8 @@ class PointSIS_Seg_Model(nn.Module):
         pred_probs = self.class_predict(q)                             # b q d -> b q l      # l代表num_labels+1
         if "labels" in s_pc.keys():    # 如果有标签，就计算loss！！！
             labels = rearrange(s_pc.labels, "(b g) -> b g", b=b_s)
-            m_i = self.loss(pred_mask,pred_probs,labels)  # 
+            shape_weight = rearrange(s_pc.shape_weight, "(b g) -> b g", b=b_s) if s_pc.shape_weight is not None else None
+            m_i = self.loss(pred_mask,pred_probs,labels, shape_weight)  # 
             parent_pc.loss = m_i
         pred_mask = rearrange(pred_mask,"b q g -> b g q")
         pred_mask = rearrange(pred_mask, "b g q -> (b g) q")

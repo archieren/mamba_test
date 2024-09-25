@@ -296,32 +296,43 @@ def group_by_group_number(parent_pc:PointCloud,
     s_idx = fps(parent_pc.coord, parent_pc.offset, s_offset)  # (b g)  # 幸亏这个fps
     return __samples(parent_pc, s_idx, s_offset,group_size)
 
+def point_curvature(a:torch.Tensor, b:torch.Tensor, dim=-1):                                                           
+    # 不知出处！
+    # 看文章 How Futile are Mindless Assessments of Roundoff in Floating-Point Computation? §12: Mangled Angles
+    a_norm = a.norm(dim=dim, keepdim=True)
+    b_norm = b.norm(dim=dim, keepdim=True)
+    angles =  2 * torch.atan2(
+        (a * b_norm - a_norm * b).norm(dim=dim),
+        (a * b_norm + a_norm * b).norm(dim=dim)
+    )
+    angles = angles[:, 1:]                     # TODO: 去掉和自身算的曲率！
+
+    return angles.mean(dim=dim, keepdim=True)
+
 def __samples(parent_pc:PointCloud, s_idx:torch.Tensor, s_offset:torch.Tensor, group_size:int) -> torch.Tensor:
+    radians_of_five_degrees = 0.087266
     s_xyz  = parent_pc.coord[s_idx]                                                  # (b g) 3   or n_1+n_2+...+n_b 3
     N = group_size                                                           
     s_n_idx, _dist = knn(N, parent_pc.coord, parent_pc.offset, s_xyz,s_offset)       # (b g) N,_ or n_1+n_2+...+n_b N, _
 
-    s_n = parent_pc.coord[s_n_idx]                                                         # (b g) N 3 or n_1+n_2+...+n_b N 3
+    s_n = parent_pc.coord[s_n_idx]                                                   # (b g) N 3 or n_1+n_2+...+n_b N 3 # 没特定feat时,用他
     # 这种搞法，类似梯度
     # s_n = s_n - s_xyz.unsqueeze(1)                                                         # (b g) N 3 or n_1+n_2+...+n_b N 3 
     # s_n = torch.cat([s_xyz.unsqueez(1), s_n], dim= 1)                                        # (b g) (N+1) 3 or n_1+n_2+...+n_b (N+1) 3
-    # 由于__samples看起来只用一次，我假设 feat将会是 vertex_normals! 有normals，就用曲率！
-    if "feat" in parent_pc.keys():
-        s_feat = parent_pc.feat[s_idx]                                                        # (b g) 3 or n_1+n_2+...+n_b 3
-        s_n_feat = parent_pc.feat[s_n_idx]                                                         # (b g) N 3 or n_1+n_2+...+n_b N 3
-        s_n = torch.cat([s_n, s_feat.unsqueeze(1), s_n_feat], dim= 1)                              #  (b g) (2N+1) 3 or n_1+n_2+...+n_b (2N+1) 3
-        # #这种形式,类似曲率.
-        # s_n = s_n - s_feat.unsqueeze(1)                                                       # (b g) N 3 or n_1+n_2+...+n_b N 3  
-        # 这种形式，直接算所谓的点曲率.
-        # 所谓的 point_curvature, 先写到这。但我觉得上面那个应当也可以扑捉局部的平坦性了！
-        # s_feat.unsqueeze(1).repeat(1, N, 1)  似乎可以不repeat！                                        
-        # point_curvature = __point_curvature(s_n, s_feat.unsqueeze(1))                         #  -> (b g) 1 or n_1+n_2+...+n_b 1
-        # s_n = torch.cat([s_feat, point_curvature], dim=-1)                                    #  (b g) 4 or n_1+n_2+...+n_b 4
+    # 由于__samples看起来只用一次，我假设 feat将会是 vertex_normals!有normals，就用曲率！
+    shape_weight = None
+    if "feat" in parent_pc.keys():                                                              # 目前，feat就是 normals！
+        s_feat = parent_pc.feat[s_idx]                                                          # (b g) 3 or n_1+n_2+...+n_b 3
+        s_n_feat = parent_pc.feat[s_n_idx]                                                      # (b g) N 3 or n_1+n_2+...+n_b N 3
+        p_curvature = point_curvature(s_feat.unsqueeze(1), s_n_feat)                            # (b g) 1 or n_1+n_2+...+n_b 1
+        shape_weight = torch.where(p_curvature > radians_of_five_degrees, 1, 0).squeeze(-1)     # 大概在百分位40%左右！              
+        s_n  = torch.cat([s_feat, p_curvature], dim=-1)                                         # (b g) 4 or n_1+n_2+...+n_b 4
 
     if "labels" in parent_pc.keys():                                                           # 如果是有训练的数据
-        s_lables = parent_pc.labels[s_idx]
+        s_lables = parent_pc.labels[s_idx]                                                     # (b g) or n_1+n_2+...+n_b
         s_data = Dict(coord=s_xyz, 
                   feat=s_n,
+                  shape_weight=shape_weight,
                   labels=s_lables,
                   offset=s_offset,
                   grid_size=parent_pc.grid_size,                                            # 用父点云的grid_size

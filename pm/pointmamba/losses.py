@@ -249,32 +249,46 @@ def dice_loss(inputs: Tensor, labels: Tensor, num_masks: int) -> Tensor:
     loss = loss.sum() / num_masks
     return loss
 
-def focal_loss(inputs: torch.Tensor, labels: torch.Tensor, num_masks: int, alpha=0.25,gamma=2,reduction = "none",) -> torch.Tensor:
+def geo_loss(inputs: torch.Tensor, 
+               labels: torch.Tensor, 
+               num_masks: int, 
+               target_shape_weight: torch.Tensor,
+               #alpha=0.25,
+               gamma=2,) -> torch.Tensor:
     r"""
     Args:
         inputs (`torch.Tensor`):
-            A tensor representing a mask.
+            预测的一个掩码.
         labels (`torch.Tensor`):
-            A tensor with the same shape as inputs. Stores the binary classification labels for each element in inputs
-            (0 for the negative class and 1 for the positive class).
+            标注的一个掩码.
+        target_shape_weight:
+            特征明显处的标注！
         num_masks (`int`):
-            The number of masks present in the current batch, used for normalization.
+            应当是上三个张量的shape[0].
+            
 
     Returns:
         `torch.Tensor`: The computed loss.    
     """
-    # TODO:妈的，先这样，不知对不对！
+    # TODO:妈的，先这样，不知对不对！ 按照论文来写的！    
     p = torch.sigmoid(inputs)
-    ce_loss = F.binary_cross_entropy_with_logits(inputs, labels, reduction="none") # 在mask内，实质上作的是二分类！有pos_weigths,就会成为某种Focal_Loss
+    ce_loss = F.binary_cross_entropy_with_logits(inputs, labels, reduction="none") # 在mask内，实质上作的是二分类！ ce_loss == -log(p_t)
  
-    p_t = p * labels + (1 - p) * (1 - labels)     # p * (1 - p) == labels * (1 - lbaels) == 0
-    loss = ce_loss * ((1 - p_t) ** gamma)
+    p_t = p * labels + (1 - p) * (1 - labels)     # labels * (1 - lbaels) == 0
+    loss = ce_loss * ((1 - p_t) ** gamma)          # loss == -log(p_t)*((1 - p_t) ** gamma)
 
-    if alpha >= 0:
-        alpha_t = alpha * labels + (1 - alpha) * (1 - labels)
-        loss = alpha_t * loss
+    # if alpha >= 0:
+    #     alpha_t = alpha * labels + (1 - alpha) * (1 - labels)
+    #     loss = alpha_t * loss
+    s_r_t =  target_shape_weight       # TODO:想明白！ 只考虑显著点的loss
+    loss = s_r_t * loss
 
-    loss = loss.mean(1).sum() / num_masks
+    ##
+    loss = loss.sum(1, keepdim=True)
+    s_r_t = s_r_t.sum(1, keepdim= True)
+    loss = loss/(s_r_t + 1e-8)
+    loss = loss.sum() / num_masks
+    ##
     return loss
     
 
@@ -437,10 +451,11 @@ class PMLoss(nn.Module):
         return losses
 
     def loss_masks(self,
-        masks_queries_logits: torch.Tensor,    # b q g
-        mask_labels: List[torch.Tensor],       # [t_0 g,...]  len_of_list: b
-        indices: Tuple[np.array],
+        masks_queries_logits: torch.Tensor,     # b q g
+        mask_labels: List[torch.Tensor],        # [t_0 g     ,...] , len_of_list: b
+        indices: Tuple[np.array],               # [(t_0, t_0),...] , len_of_list: b
         num_masks: int,
+        shape_weight        : torch.Tensor=None # [t_0 g     ,...] , len_of_list: b
     ) -> Dict[str, torch.Tensor]:
         """Compute the losses related to the masks using sigmoid_cross_entropy_loss and dice loss.
         Returns:
@@ -452,19 +467,18 @@ class PMLoss(nn.Module):
         """
         # src_idx==(batch_indices, prediction_indices), shape为(t_0+t_1+...+t_(b-1), t_0+t_1+...+t_(b-1)).索引出了t_0+t_1+...+t_(b-1)个位置！
         src_idx = self._get_predictions_permutation_indices(indices)
+        pred_masks = masks_queries_logits[src_idx]  # b q g ->(t_0+t_1+...+t_(b-1), g)
         # tgt_idx==(batch_indices, target_indices), shape为(t_0+t_1+...+t_(b-1), t_0+t_1+...+t_(b-1)).索引出了t_0+t_1+...+t_(b-1)个位置！
-        tgt_idx = self._get_targets_permutation_indices(indices)
-        #
-        pred_masks = masks_queries_logits[src_idx]  # ->(t_0+t_1+...+t_(b-1), g)
+        # tgt_idx = self._get_targets_permutation_indices(indices)  # TODO:要想明白tgt_idx为什么没用?因为mask_labels在batch维,是个列表！
+        # target_masks = mask_labels[tgt_idx]                       # TODO:想想！ 为什么要按列表来处理了！
         target_masks = torch.cat([target[target_indices] for target, (_, target_indices) in zip(mask_labels, indices)])
-        # target_masks = mask_labels[tgt_idx]         # TODO:想想！
-
+        #
+        target_shape_weight = torch.cat([target[target_indices] for target, (_, target_indices) in zip(shape_weight, indices)]) 
         losses = {
-            "loss_mask": sigmoid_cross_entropy_loss(pred_masks, target_masks, num_masks),
-            "loss_dice": dice_loss(pred_masks, target_masks, num_masks),
-            "loss_focal":focal_loss(pred_masks,target_masks,num_masks),
+            "loss_mask" : sigmoid_cross_entropy_loss(pred_masks, target_masks, num_masks),
+            "loss_dice" : dice_loss(pred_masks, target_masks, num_masks),
+            "loss_geo": geo_loss(pred_masks,target_masks,num_masks, target_shape_weight),
         }
-
         del pred_masks
         del target_masks
         return losses
@@ -497,6 +511,7 @@ class PMLoss(nn.Module):
         masks_queries_logits: torch.Tensor,                     # b q g
         class_queries_logits: torch.Tensor,                     # b q l
         labels              : torch.Tensor,                     # b g
+        shape_weight        : torch.Tensor=None                 # b g
     ) -> Dict[str, torch.Tensor]:
         """
         Returns:
@@ -509,7 +524,7 @@ class PMLoss(nn.Module):
             if `use_auxiliary_loss` was set to `true` in [`M2FConfig`], the dictionary contains additional
             losses for each auxiliary predictions.
         """
-        class_labels, mask_labels = tooth_lables(labels)
+        class_labels, mask_labels, shape_weights = tooth_lables(labels,shape_weight)
 
         # retrieve the matching between the outputs of the last layer and the labels
         indices = self.matcher(masks_queries_logits, class_queries_logits, mask_labels, class_labels)
@@ -517,7 +532,7 @@ class PMLoss(nn.Module):
         num_masks = self.get_num_masks(class_labels, device=class_labels[0].device)
         # get all the losses
         losses: Dict[str, Tensor] = {
-            **self.loss_masks(masks_queries_logits, mask_labels, indices, num_masks),
+            **self.loss_masks(masks_queries_logits, mask_labels, indices, num_masks, shape_weights),
             **self.loss_labels(class_queries_logits, class_labels, indices),
         }
 

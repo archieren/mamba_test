@@ -104,42 +104,55 @@ kp_cls_name =   {1:'buccal',
                 9:'groove'}
 
 #各种辅助！！ 
-def tooth_lables(labels:torch.Tensor) -> List[torch.Tensor]: # b g -> [t,...], [t g,...] 
+def tooth_lables(labels:torch.Tensor, shape_weight:torch.Tensor) -> List[torch.Tensor]: # b g, b g-> [t,...], [t g,...], [t g,...]
     """
-    将编号标签形式转成分类形式
+    将编号标签形式转成分类形式. labels和shape_weight的shape相同！
     """ 
     b_s = labels.shape[0]
     b_class_labels = []
     b_mask_labels  = []
+    b_shape_weights = []
     for b in range(b_s):
         class_labels = []
         masks = []
         up_or_low = "unknown"
-        for i in TEETH_num:
+        s_w = shape_weight[b].unsqueeze(0)
+        for i in TEETH_num:            
             x = torch.where(labels[b]==i,1,0)
             if x.sum() > 0 :                           # 有这个牙齿的标签！
+                #
                 x = x.unsqueeze(0)
                 masks.append(x)
+                #
                 cls = TEETH_num_cls[i]                 # 牙编号 -> Class!
                 class_labels.append(cls)
                 up_or_low="up" if i%10 < 2 else "low"  # 有点浪费, TODO:how?
         #       
         non_tooth_mask = torch.where(labels[b]>0, 0, 1).unsqueeze(0)             # 牙龈
         if non_tooth_mask.sum()>0:
+           #
            masks.append(non_tooth_mask)
+           #
            class_labels.append(superior_gingival if up_or_low == "up" else inferior_gingival)
 
         all_tooth_mask = torch.where(labels[b]>0, 1, 0).unsqueeze(0)             # 所有牙齿
         if all_tooth_mask.sum()> 0:
+            #
             masks.append(all_tooth_mask)
+            #
             class_labels.append(superior_dentition if up_or_low == "up" else inferior_dentition)
 
-        class_labels = torch.tensor(class_labels, device= labels.device).long()    # t   
+        t = len(class_labels)
+        class_labels = torch.tensor(class_labels, device= labels.device).long()   # [t,......]   
         b_class_labels.append(class_labels)
 
-        mask_labels = torch.cat(masks, dim=0).float()                             # t g      # TODO: 每个目标, 都有一个掩码！
+        mask_labels = torch.cat(masks, dim=0).float()                             # [t g,...]      # TODO: 每个目标, 都有一个掩码！
         b_mask_labels.append(mask_labels)
-    return b_class_labels, b_mask_labels
+
+        shape_weights = s_w.repeat(t,1).float()                                     # [t g,...]     # TODO: 每个目标， 都有一个权重 
+        b_shape_weights.append(shape_weights)
+
+    return b_class_labels, b_mask_labels, b_shape_weights
 
 @dataclass
 class Mamba1Config:     # 抄自 Mamba1的初始化参数!!!
