@@ -292,7 +292,7 @@ def group_by_group_number(parent_pc:PointCloud,
     ''' 
     # s_ 解读为 samples, n_ 解读为neighbors.
     # batch_size = parent_pc.batch[-1] + 1
-    s_offset = (torch.ones_like( parent_pc.batch_bin)* num_group).cumsum(0).int() # b
+    s_offset = (torch.ones_like( parent_pc.batch_bin)* num_group).cumsum(0).int() # b # 构造所需的offset数据！
     s_idx = fps(parent_pc.coord, parent_pc.offset, s_offset)  # (b g)  # 幸亏这个fps
     return __samples(parent_pc, s_idx, s_offset,group_size)
 
@@ -310,7 +310,7 @@ def point_curvature(a:torch.Tensor, b:torch.Tensor, dim=-1):
     return angles.mean(dim=dim, keepdim=True)
 
 def __samples(parent_pc:PointCloud, s_idx:torch.Tensor, s_offset:torch.Tensor, group_size:int) -> torch.Tensor:
-    radians_of_five_degrees = 0.087266
+    radians_of_five_degrees = 0.087266                                               # 5度的弧度。
     s_xyz  = parent_pc.coord[s_idx]                                                  # (b g) 3   or n_1+n_2+...+n_b 3
     N = group_size                                                           
     s_n_idx, _dist = knn(N, parent_pc.coord, parent_pc.offset, s_xyz,s_offset)       # (b g) N,_ or n_1+n_2+...+n_b N, _

@@ -275,7 +275,7 @@ def test_point_sis():
     from pm.pointmamba import PointSIS_SEG, make_default_config
 
     m_config = make_default_config()
-    checkpoints_file = __get_ckpt()
+    checkpoints_file = __get_ckpt(name='model_weights_keypoint.pth')
 
     model =PointSIS_SEG(m_config)
     if checkpoints_file.exists():
@@ -290,32 +290,6 @@ def test_point_sis():
         sn = model(PointCloud(dc))
         time_it(start_time)
         print(sn.shape)
-
-
-def test_point_sis_Seg_Model():
-    import torch.autograd.profiler as profiler
-
-    from pathlib import Path
-    from torch.utils.cpp_extension import CUDA_HOME
-
-    from pm.pointmamba import PointSIS_Seg_Model, make_default_config
-    config = make_default_config()
-    model =PointSIS_Seg_Model(config).to(device)
-    #dc = make_data_dict_(upper_stl_path="./assets/124_upper.stl",lower_stl_path="./assets/124_lower.stl")
-    dc = make_data_dict_(upper_stl_path="./assets/124_upper.stl")
-    for i in range(10):
-        start_time = time.time()
-        pc = PointCloud(dc)
-        sn = model(pc)
-        time_it(start_time)
-    # with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
-    #   with profiler.record_function("model_forward"):
-    #       output = model(dc)
-    #       loss = output.sum()
-    #   with profiler.record_function("model_backward"):
-    #       loss.backward()
-    # print(prof.key_averages().table(sort_by="cuda_time_total",row_limit=10))
-    # print(f"Peak CUDA Memory Usage: {prof.total_average().cuda_memory_usage / (1024 ** 2)} MB")
 
 
 
@@ -352,7 +326,7 @@ def test_patch():
         upper_mesh = read_mesh(file_path="./assets/124_upper.stl")
         o3d.visualization.draw_geometries([ pointSet_a, pointSet_b, pointSet_c, upper_mesh]) #
     
-    #draw(pc)
+    draw(pc)
 
     start_time = time.time()
     pad,unpad, pad_shift, pad_shift_back=pc.get_padding_and_inverse()
@@ -461,10 +435,9 @@ def test_mask_predictor():
 # test_curvenet()
 
 # test_point_transformer()
-# test_point_sis()
-# test_point_sis_Seg_Model()
+test_point_sis()
 # test_patch()
 # test_serializedpooling()
-test_remote_pointsis()
-test_mask_predictor()
+# test_remote_pointsis()
+# test_mask_predictor()
 input()

@@ -31,40 +31,6 @@ class Grouper_By_NumGroup(nn.Module):   # TODO：这个应当改名。采样的�
         s_pc = group_by_group_number(pc, G, N)
         return s_pc
 
-# class Feature_Encoder__(nn.Module):        # 改自Point Mamba！
-#     def __init__(self, encoder_channel):
-#         super().__init__()
-#         self.e_o = encoder_channel       # 特征编码输出的通道数！
-#         self.e_i = 128                   # 特征编码内部使用的通道数！
-#         self.first_conv = nn.Sequential(
-#             nn.Linear(3,self.e_i),       # TODO:3
-#             nn.LayerNorm(self.e_i),
-#             nn.GELU(),                       
-#             nn.Linear(self.e_i, self.e_i *2)
-#         )
-#         self.second_conv = nn.Sequential(
-#             nn.Linear(self.e_i *4, self.e_i *4),
-#             nn.LayerNorm(self.e_i *4 ),
-#             nn.GELU(),
-#             nn.Linear(self.e_i *4, self.e_o)
-#         )
-
-#     def forward(self, feature):
-#         '''
-#             point_groups : BG N 3  ( N 邻居的数量)
-#             -----------------
-#             feature_global : BG C
-#         '''
-#         BG, N, C = feature.shape
-#         # encoder                                                     # 
-#         feature = self.first_conv(feature)                            # BG N 3  -> BG N e_i*2 
-#         feature_global = torch.max(feature, dim=1, keepdim=True)[0]   # BG N e_i*2 -> BG 1 e_i*2  # 为什么是max?
-#         feature_global = feature_global.expand(-1, N, -1)             # BG 1 e_i*2 -> BG N e_i*2
-#         feature = torch.cat([feature, feature_global], dim=-1)        # BG N e_i*2 BG N e_i*2  -> BG N e_i*4
-#         feature = self.second_conv(feature)                           # BG N e_i*4 -> BG N C
-#         feature_global = torch.max(feature, dim=1, keepdim=False)[0]  # BG N C -> BG C
-#         return feature_global
-
 class Feature_Encoder(nn.Module):  # 位置也编码!! 先放到这，肯定要修改的！
     def __init__(self, encoder_channel):
         super().__init__()
