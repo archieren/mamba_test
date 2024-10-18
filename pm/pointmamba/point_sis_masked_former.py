@@ -198,7 +198,7 @@ class PointSIS_Encoder(nn.Module):
         g = self.num_group
 
         level_feat=s_feat
-        for o in range(o_s):   # TODO：order间，串行算了, 简单些！.
+        for o in range(o_s):   # TODO：order间,串行算了,简单些！. 即,有多少种排序,就按排序的类型,依次做尺度间的融合!
             # Order 
             order = s_order[o]
             o_level_feat = []
@@ -208,7 +208,7 @@ class PointSIS_Encoder(nn.Module):
                 o_level_feat.append(feat)
             #
             o_level_feat = torch.cat(o_level_feat, dim=1)                    # => b (l g) d
-            o_level_feat = self.mixers[o](o_level_feat)                      # b (l g) d => b (l g) d
+            o_level_feat = self.mixers[o](o_level_feat)                      # b (l g) d => b (l g) d   # 模仿尺度间的融合!
             o_level_feat = list(o_level_feat.split(g,dim=1))                 # b (l g) d => [b g d,...]
             # Inverse
             inverse = s_inverse[o]
@@ -242,8 +242,8 @@ class PointSIS_Seg_Model(nn.Module):
         self.loss = PMLoss(config)
 
     def forward(self, parent_pc:PointCloud):
-        #
-        s_pc = self.grouper(parent_pc)
+        # TODO: 中间数据其实都在s_pc中,应当搞个说明!
+        s_pc = self.grouper(parent_pc)             # "coord,feat,offset,grid_size,index_back_to_parent"可用，"labels,shape_weight"看情况!
         #
         s_pc = self.pointsis_feature_extractor(s_pc)
         #

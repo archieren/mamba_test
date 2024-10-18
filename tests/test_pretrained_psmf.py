@@ -91,6 +91,14 @@ def dataloader(split="train"):
     loader = DataLoader(d, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
     return loader
 
+def load_model(c_f:Path, model:nn.Module):  # TODO:还要打磨一下,主要为了一些模块的参数复用！.先留下思路！
+    pre_trained_dict = torch.load(c_f)
+    model_dict = model.state_dict()
+    for key in model_dict.keys():
+        print(key)
+    state_dict = {k:v for k,v in pre_trained_dict.items() if k in model_dict.keys()}
+    model_dict.update(state_dict)
+    model.load_state_dict(model_dict)
 
 exp_dir = Path('./log/')
 exp_dir.mkdir(exist_ok=True)
@@ -101,7 +109,9 @@ test_loader = dataloader(split="test")
 m_config = make_default_config()
 model = MODE_CLS(m_config)
 
-model.load_state_dict(torch.load(checkpoints_file))
+load_model(checkpoints_file, model)
+
+#model.load_state_dict(torch.load(checkpoints_file))
 print("Load a saved model")
 
 model= model.to(device)
@@ -118,7 +128,7 @@ def fetch_colors(i:int,feat, pred_index):
 
 l_m = nn.LogSoftmax(dim=-1)
 for i, data in enumerate(test_loader): 
-    #if i > 1: break
+    if i > 1: break
     start_time = time.time()  
     pc =model(PointCloud(data))
     time_it(start_time)
@@ -126,7 +136,12 @@ for i, data in enumerate(test_loader):
     pred_probs = pc.pred_probs
     pred_index = l_m(pc.pred_probs)
     pred_index = torch.argmax(pred_index,dim=-1)
+    print(pred_index)
+    sparse = pred_index.squeeze(0).to_sparse()
+    print(sparse)
+    print(sparse[2])
     pred_index = pred_index.squeeze(0).nonzero().view(-1)
+    print(pred_index)
     points = pc.coord.cpu().numpy()
     triangles = pc.triangles.cpu().numpy()
 

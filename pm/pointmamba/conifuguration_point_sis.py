@@ -83,15 +83,16 @@ inferior_dentition= 36
 
 all_classes = 36
 
-kp_name_cls =   {'buccal':1, 
-                'buccal-cusp':2, 
-                'contact':3, 
-                'dental-cusp':4,
-                'edge':5,
-                'fossa':6,
-                'lingual':7,
-                'lingual-cusp':8,
-                'groove':9}
+kp_name_cls =   {'buccal':1,                # 颊(侧)点                               #6    #7       各2个
+                'buccal-cusp':2,            # 颊(侧)尖点                 #4    #5                   各1个
+                'contact':3,                # ？？          #1 #2   #3  #4    #5     #6             各2个
+                'dental-cusp':4,            # 牙尖点                #3                              各1个
+                'edge':5,                   # ？？          #1 #2 
+                'fossa':6,                  # 窝凹点                     #4    #5     #6    #7      各1个
+                'lingual':7,                # 舌(侧)点                                #6    #7      各2个
+                'lingual-cusp':8,           # 舌(侧)尖点                 #4    #5                   各1个
+                'groove':9,                 # 凹槽点                                  #6            各1个
+                }                           #              2-4 2-4 2-3  4-5   4-5    5-8    3-5    N类-M个点
 
 kp_cls_name =   {1:'buccal', 
                 2:'buccal-cusp', 
