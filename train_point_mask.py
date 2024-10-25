@@ -30,7 +30,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 #参数：TODO
-epoches = 1200
+epoches = 2
 batch_size = 1
 
 def time_it(start_time):
@@ -129,7 +129,7 @@ def train():
         #             pc = model(PointCloud(data))                      # prediction
         #             t.set_description(f"Epoch {epoch}/{epoches}: Loss:{loss_fn(pc)}")
         
-        torch.save(model.state_dict(), checkpoints_file)
+        torch.save(model.model.state_dict(), checkpoints_file)
         print("Saved a checkpoints!")
 train()
 input()

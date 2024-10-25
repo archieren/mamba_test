@@ -6,6 +6,7 @@ from deprecated import deprecated
 from pm.sfc_serialization import encode
 from pm.utils.misc import offset2batch,batch2offset,offset2bincount
 
+from pointops import interpolation2
 from pointops import knn_query as knn
 from pointops import farthest_point_sampling as fps
 
@@ -344,3 +345,31 @@ def __samples(parent_pc:PointCloud, s_idx:torch.Tensor, s_offset:torch.Tensor, g
                     grid_size=parent_pc.grid_size,                                            # 用父点云的grid_size
                     index_back_to_parent=s_idx)                                               # 用于构造一个新的点集！
     return PointCloud(s_data)
+
+
+class Grouper_By_NumGroup(nn.Module):   # TODO：这个应当改名。采样的时候，还生成了Feature！
+    def __init__(self, num_group:int, group_size:int):
+        super().__init__()
+        self.num_group = num_group
+        self.group_size = group_size
+    
+    def forward(self, pc:PointCloud)-> PointCloud:
+        G, N = self.num_group, self.group_size
+        s_pc = group_by_group_number(pc, G, N)
+        return s_pc
+    
+class FeatPropagation(nn.Module):
+    def __init__(self, group_size:int):
+        super().__init__()
+        self.k = group_size
+        self.interpolation = interpolation2
+
+    def forward(self, parent_pc:PointCloud, s_pc:PointCloud): 
+        xyz = s_pc.coord
+        offset = s_pc.offset
+        new_xyz = parent_pc.coord        # 为什么这样， new_xyz是parent_pc.coord! 想明白这个，就明白底层算法了！
+        new_offset = parent_pc.offset
+
+        input = s_pc.feat
+        output = self.interpolation(xyz, new_xyz, input, offset, new_offset, self.k)
+        return output

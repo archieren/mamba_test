@@ -5,6 +5,11 @@ import open3d as o3d
 
 from pathlib import Path
 
+"""
+看来数据集的制作,在刚开始的时候,真的,走了弯路.或许,情有可原,我考虑的是没有下采样的情况.
+现在添加一部分,制作下采样的训练集!
+"""
+
 #这一段，half-manual
 def gather_unlabeled_data(source_dir:Path, target_dir:Path):  # 将未标注的 stl移到一个目录！！
     target_dir.mkdir(exist_ok=True)
@@ -41,39 +46,21 @@ def collect_group(source_dir:Path, stems:list[str]):
     name_c = []
     for stem in stems:        
         mesh, label_ = get_labeled_data(source_dir, stem)
-        label_keys = list(label_.keys())               # {"tooth-id"-> [index_of_vertex]}
+        seg = label_.get("seg")                       # 简单考虑{"seg" -> {"tooth-id"-> [index_of_vertex]}} 或 {"tooth-id"-> [index_of_vertex]}
+        label = seg if seg is not None else label_    
+        label_keys = list(label.keys())               # {"tooth-id"-> [index_of_vertex]}
 
         vertices = np.asarray(mesh.vertices,dtype=float)
         triangles = np.asarray(mesh.triangles,dtype=int)
         label = np.zeros((vertices.shape[0],), dtype=int) #dtype=np.dtype('b'))
         for label_key in label_keys:
-            label[label_[label_key]] = int(label_key)     # 
+            label[label[label_key]] = int(label_key)     # 
         vertices_c.append(vertices)
         triangles_c.append(triangles)
         label_c.append(label)
         name_c.append(stem)
 
     return {"vertices":vertices_c, "triangles":triangles_c,"label":label_c,"name":name_c}
-
-## 这种流式方式，似乎不太好？  当然，也可行？
-# def gen_(source_dir:Path):
-#     for stl_item in source_dir.glob("*.stl"):
-#         stem = stl_item.stem
-#         mesh, label_ = get_labeled_data(source_dir, stem)
-#         label_keys = list(label_.keys())
-
-#         vertices = np.asarray(mesh.vertices,dtype=float)
-#         triangles = np.asarray(mesh.triangles,dtype=int)
-#         label = np.zeros((vertices.shape[0],), dtype=int) #dtype=np.dtype('b'))
-#         for label_key in label_keys:
-#             label[label_[label_key]] = int(label_key)
-#         yield {"vertices":vertices, "triangles":triangles,"label":label,"name":stem}    
-
-
-# def make_parquet(source_dir:Path, out_name="test.parquet"):  
-#     from datasets import Dataset,IterableDataset
-#     d = Dataset.from_generator(gen_, gen_kwargs={"source_dir":source_dir})    
-#     d.to_parquet(out_name)
 
 def make_parquet_(source_dir:Path, out_dir="data", group_size = 400,clx="train"):
     import math
@@ -86,7 +73,6 @@ def make_parquet_(source_dir:Path, out_dir="data", group_size = 400,clx="train")
         stems_part = stems[group_size*i:group_size*(i+1)]
         data_d = collect_group(source_dir, stems_part)
         d = Dataset.from_dict(data_d)
-        # TODO dataset-name-train-0000-of-0004.parquet
         out_name = f"{out_dir}/{clx}-oralscan-part-{i:04}-of-{file_numbers:04}.parquet"
         d.to_parquet(out_name)
 
@@ -117,6 +103,8 @@ def enumerate_example(ex):
 
     s_mesh = mesh.select_by_index(t_i)
     o3d.visualization.draw_geometries([ pointSet, s_mesh])
+
+
 
 
 

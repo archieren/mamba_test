@@ -16,20 +16,8 @@ from mamba_ssm.modules.block import Block
 from pm.pointmamba.conifuguration_point_sis import Mamba1Config, PointSISConfig
 from pm.pointmamba.losses import PMLoss
 from pm.pointmamba.pointmask import MaskDecoder
-from pm.utils.point_cloud import PointCloud, group_by_group_number
-from pointops import interpolation2
+from pm.utils.point_cloud import PointCloud, Grouper_By_NumGroup,FeatPropagation
 
-
-class Grouper_By_NumGroup(nn.Module):   # TODO：这个应当改名。采样的时候，还生成了Feature！
-    def __init__(self, num_group, group_size):
-        super().__init__()
-        self.num_group = num_group
-        self.group_size = group_size
-    
-    def forward(self, pc:PointCloud)-> PointCloud:
-        G, N = self.num_group, self.group_size
-        s_pc = group_by_group_number(pc, G, N)
-        return s_pc
 
 class Feature_Encoder(nn.Module):  # 位置也编码!! 先放到这，肯定要修改的！
     def __init__(self, encoder_channel):
@@ -64,22 +52,6 @@ class Pos_Encoder(nn.Module):  # 位置也编码!! 先放到这，肯定要修�
         BG 3 -> BG C
         """
         return self.encoder(pos)
-
-class FeatPropagation(nn.Module):
-    def __init__(self, group_size):
-        super().__init__()
-        self.k = group_size
-        self.interpolation = interpolation2
-
-    def forward(self, parent_pc:PointCloud, s_pc:PointCloud): 
-        xyz = s_pc.coord
-        offset = s_pc.offset
-        new_xyz = parent_pc.coord        # 为什么这样， new_xyz是parent_pc.coord! 想明白这个，就明白底层算法了！
-        new_offset = parent_pc.offset
-
-        input = s_pc.feat
-        output = self.interpolation(xyz, new_xyz, input, offset, new_offset, self.k)
-        return output
     
 class MixerLayers(nn.Module):
     """
@@ -224,10 +196,64 @@ class PointSIS_Encoder(nn.Module):
         return s_pc
 
 
-class PointSIS_Seg_Model(nn.Module):
+# class PointSIS_Seg_Model(nn.Module):
+#     def __init__(self, config:PointSISConfig):
+#         super().__init__()
+#         self.grouper = Grouper_By_NumGroup(config.num_group, config.group_size)
+#         self.pointsis_feature_extractor = PointSIS_Feature_Extractor(config)
+#         self.point_encoder = PointSIS_Encoder(config)
+#         self.mask_decoder = MaskDecoder(config)
+#         #
+#         self.num_queries = config.num_queries
+#         self.query_embedder = nn.Embedding(config.num_queries, config.d_model)        # 可学习的查询！
+#         self.query_position_embedder = nn.Embedding(config.num_queries, config.d_model)   # TODO：位置也是可学习的？？？ Mask2Former就是如此！！！
+#         #
+#         self.class_predict = nn.Linear(config.d_model, config.num_labels+1)
+#         self.feat_propagation = FeatPropagation(config.group_size)
+#         #        
+#         self.loss = PMLoss(config)
+
+#     def forward(self, parent_pc:PointCloud):
+#         # TODO: 中间数据其实都在s_pc中,应当搞个说明!
+#         s_pc = self.grouper(parent_pc)             # "coord,feat,offset,grid_size,index_back_to_parent"可用，"labels,shape_weight"看情况!
+#         #
+#         s_pc = self.pointsis_feature_extractor(s_pc)
+#         #
+#         s_pc = self.point_encoder(s_pc)
+#         b_s = s_pc.batch[-1]+1
+#         #
+#         query_embeddings = self.query_embedder.weight.unsqueeze(0).repeat(b_s, 1, 1)
+#         query_position_embeddings = self.query_position_embedder.weight.unsqueeze(0).repeat(b_s, 1, 1)
+#         point_embedding = s_pc.feat[-1]
+#         encoder_hidden_states = s_pc.feat[0:-1]
+#         # TODO:有个问题,mask_decoder的参数point_embedding,encoder_hidden_states是否需要序列化?在Transformer机制下，可以先不考虑?作也容易！
+#         pred_mask, q = self.mask_decoder(                               # -> b q g , b q d
+#                             query_embeddings = query_embeddings,
+#                             query_position_embeddings= query_position_embeddings,
+#                             point_embeddings = point_embedding,
+#                             encoder_hidden_states= encoder_hidden_states)
+
+#         pred_probs = self.class_predict(q)                             # b q d -> b q l      # l代表num_labels+1
+#         if "labels" in s_pc.keys():    # 如果有标签，就计算loss！！！
+#             labels = rearrange(s_pc.labels, "(b g) -> b g", b=b_s)
+#             shape_weight = rearrange(s_pc.shape_weight, "(b g) -> b g", b=b_s) if s_pc.shape_weight is not None else None
+#             m_i = self.loss(pred_mask,pred_probs,labels, shape_weight)  # 
+#             parent_pc.loss = m_i
+#         pred_mask = rearrange(pred_mask,"b q g -> b g q")
+#         pred_mask = rearrange(pred_mask, "b g q -> (b g) q")
+#         s_pc.feat = pred_mask.contiguous()       # TODO:老问题 s_pc的feat过载太多，看怎么清晰一下！！！ 这个contiguous还必须！
+#         feat = self.feat_propagation(parent_pc, s_pc)
+#         parent_pc.feat = feat
+#         parent_pc.pred_probs = pred_probs
+#         del s_pc
+#         return parent_pc
+    
+class PointSIS_Seg(nn.Module):
+    """
+    这部分是拿来训练的,预处理、後处理都没有学习的内容！
+    """
     def __init__(self, config:PointSISConfig):
         super().__init__()
-        self.grouper = Grouper_By_NumGroup(config.num_group, config.group_size)
         self.pointsis_feature_extractor = PointSIS_Feature_Extractor(config)
         self.point_encoder = PointSIS_Encoder(config)
         self.mask_decoder = MaskDecoder(config)
@@ -237,13 +263,11 @@ class PointSIS_Seg_Model(nn.Module):
         self.query_position_embedder = nn.Embedding(config.num_queries, config.d_model)   # TODO：位置也是可学习的？？？ Mask2Former就是如此！！！
         #
         self.class_predict = nn.Linear(config.d_model, config.num_labels+1)
-        self.feat_propagation = FeatPropagation(config.group_size)
         #        
         self.loss = PMLoss(config)
 
-    def forward(self, parent_pc:PointCloud):
-        # TODO: 中间数据其实都在s_pc中,应当搞个说明!
-        s_pc = self.grouper(parent_pc)             # "coord,feat,offset,grid_size,index_back_to_parent"可用，"labels,shape_weight"看情况!
+    def forward(self, s_pc:PointCloud):
+        # s_pc: "coord,feat,offset,grid_size,index_back_to_parent"可用，"labels,shape_weight"看情况!
         #
         s_pc = self.pointsis_feature_extractor(s_pc)
         #
@@ -266,12 +290,33 @@ class PointSIS_Seg_Model(nn.Module):
             labels = rearrange(s_pc.labels, "(b g) -> b g", b=b_s)
             shape_weight = rearrange(s_pc.shape_weight, "(b g) -> b g", b=b_s) if s_pc.shape_weight is not None else None
             m_i = self.loss(pred_mask,pred_probs,labels, shape_weight)  # 
-            parent_pc.loss = m_i
+            s_pc.loss = m_i
         pred_mask = rearrange(pred_mask,"b q g -> b g q")
         pred_mask = rearrange(pred_mask, "b g q -> (b g) q")
         s_pc.feat = pred_mask.contiguous()       # TODO:老问题 s_pc的feat过载太多，看怎么清晰一下！！！ 这个contiguous还必须！
-        feat = self.feat_propagation(parent_pc, s_pc)
-        parent_pc.feat = feat
-        parent_pc.pred_probs = pred_probs
+        s_pc.pred_probs = pred_probs
+        return s_pc
+    
+class PointSIS_Seg_Model(nn.Module):
+    """
+    注意,训练的是PointSIS_Seg,用的是PointSIS_Seg_Model!
+    """
+    def __init__(self, config:PointSISConfig):
+        super().__init__()
+        self.grouper = Grouper_By_NumGroup(config.num_group, config.group_size)
+        self.feat_propagation = FeatPropagation(config.group_size)
+        self.model = PointSIS_Seg(config)
+    
+    def load_state_dict(self, state_dict, strict = True, assign = False):
+        self.model.load_state_dict(state_dict,strict = strict, assign = assign)    # It means, this class of self has no parameters to be trained!
+        return self
+    
+    def forward(self, parent_pc:PointCloud):
+        s_pc = self.model(self.grouper(parent_pc))
+        parent_pc.feat = self.feat_propagation(parent_pc, s_pc)
+        parent_pc.pred_probs = s_pc.pred_probs
+        if s_pc.loss is not None:
+            parent_pc.loss = s_pc.loss
         del s_pc
         return parent_pc
+

@@ -275,13 +275,13 @@ def test_point_sis():
     from pm.pointmamba import PointSIS_SEG, make_default_config
 
     m_config = make_default_config()
-    checkpoints_file = __get_ckpt(name='model_weights_keypoint.pth')
+    #checkpoints_file = __get_ckpt(name='model_weights_keypoint.pth')
 
     model =PointSIS_SEG(m_config)
-    if checkpoints_file.exists():
-        ckpt = torch.load(checkpoints_file)
-        model.load_state_dict(ckpt)
-        print("Load a saved model")
+    # if checkpoints_file.exists():
+    #     ckpt = torch.load(checkpoints_file)
+    #     model.load_state_dict(ckpt)
+    #     print("Load a saved model")
     model = model.to(device)
     #dc = make_data_dict(upper_stl_path="./assets/124_upper.stl",lower_stl_path="./assets/124_lower.stl")
     dc = make_data_dict_(upper_stl_path="./assets/124_upper.stl")

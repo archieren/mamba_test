@@ -46,29 +46,29 @@ def bi_cls(x, *y):  # 没想明白*y！
 
 def collate_fn(batch, device):
     vertices=[]
-    # normals=[]
+    normals=[]
     offset = []
     labels = []
     for example in batch:
-        # oral_scan = o3d.geometry.TriangleMesh()
-        # oral_scan.vertices  = o3d.utility.Vector3dVector(example["vertices"])
-        # oral_scan.triangles = o3d.utility.Vector3iVector(example["triangles"])
-        # oral_scan.compute_vertex_normals()
-        # vertex_normals = np.asarray(oral_scan.vertex_normals)    # TODO：制做数据集时去处理， 这儿就省事了！
+        oral_scan = o3d.geometry.TriangleMesh()
+        oral_scan.vertices  = o3d.utility.Vector3dVector(example["vertices"])
+        oral_scan.triangles = o3d.utility.Vector3iVector(example["triangles"])
+        oral_scan.compute_vertex_normals()
+        vertex_normals = np.asarray(oral_scan.vertex_normals)    # TODO：制做数据集时去处理， 这儿就省事了！
 
         vertices.append(torch.tensor(example["vertices"], dtype=torch.float))
-        # normals.append(torch.tensor(vertex_normals, dtype=torch.float))
+        normals.append(torch.tensor(vertex_normals, dtype=torch.float))
         offset.append(example["vertices"].shape[0])
         label = torch.tensor(example["label"])
         label = label.map_(label,bi_cls)
         labels.append(label)
     
     vertices = torch.cat(vertices).cuda(device)
-    # normals  = torch.cat(normals).cuda(device)
+    normals  = torch.cat(normals).cuda(device)
     labels   = torch.cat(labels).cuda(device)
     offset = torch.tensor(offset, device=device).cumsum(0).int()
     return Dict(coord=vertices,
-                #feat=normals, 
+                feat=normals, 
                 labels=labels, 
                 offset=offset, 
                 grid_size=1.0e-2)
@@ -109,16 +109,17 @@ def train():
     
     model= model.to(device)
     
-    for epoch in range(epoches):
-        for i, data in enumerate(test_loader):
-            start_time = time.time()   
-            pred=model(PointCloud(data))
-            print(pred.feat.shape)
-            if "loss" in pred.keys():
-                print(pred.loss)
-                loss = sum(pred.loss.values())
-                print(loss)
-            time_it(start_time)
+    with torch.no_grad():
+        for epoch in range(epoches):
+            for i, data in enumerate(test_loader):
+                start_time = time.time()   
+                pred = model(PointCloud(data))
+                print(pred.feat.shape)
+                if "loss" in pred.keys():
+                    print(pred.loss)
+                    loss = sum(pred.loss.values())
+                    print(loss)
+                time_it(start_time)
         
 train()
 input()
