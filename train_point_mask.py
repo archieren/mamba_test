@@ -52,7 +52,7 @@ def collate_fn(batch, device):
         oral_scan.vertices  = o3d.utility.Vector3dVector(example["vertices"])
         oral_scan.triangles = o3d.utility.Vector3iVector(example["triangles"])
         oral_scan.compute_vertex_normals()
-        vertex_normals = np.asarray(oral_scan.vertex_normals)    # TODO：制做数据集时去处理， 这儿就省事了！
+        vertex_normals = np.asarray(oral_scan.vertex_normals)
 
         vertices.append(torch.tensor(example["vertices"], dtype=torch.float))
         normals.append(torch.tensor(vertex_normals, dtype=torch.float))
