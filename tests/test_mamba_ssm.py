@@ -6,13 +6,14 @@ device='cuda'
 torch.device(device)
 
 def test_mamba_ssm():
-    from mamba_ssm import Mamba
+    from mamba_ssm import Mamba2 as Mamba
     from torchinfo import summary
     import torch.autograd.profiler as profiler 
     
-    batch, length, dim = 2, 1024*16, 32
+    batch, length, dim = 2, 1024*16, 256
     x = torch.randn(batch, length, dim).to(device)
     x.requieres_grad = True
+    #  对 Mamba2 要 d_model * expand / headdim = multiple of 8
     model = Mamba(
         # This module uses roughly 3 * expand * d_model^2 parameters
         d_model=dim, # Model dimension d_model

@@ -16,9 +16,10 @@ $unset CUDA_PATH
 
 3)
 $cd ...causal-conv1d....
-$CAUSAL_CONV1D_FORCE_BUILD=TRUE pip install .
+$CAUSAL_CONV1D_FORCE_BUILD=TRUE pip install . --no-build-isolation
 $cd ...mamba...
-$MAMBA_FORCE_BUILD=TRUE pip install .
+$MAMBA_FORCE_BUILD=TRUE pip install . --no-build-isolation
+
 
 4)  到pointnet2里将pointnet2_ops_lib导出来!!! 
 # 我用的是https://github.com/erikwijmans/Pointnet2_PyTorch里的
@@ -29,7 +30,7 @@ $pip install .
 $cd ...pointops2...
 $pip install .
 $cd ...pointops...
-$pip install .
+$pip --no-build-isolation install . 
 
 关于pyg的 PyTorch Geometric
 # 当然, torch和cuda的版本,自行调整!!!

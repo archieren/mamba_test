@@ -2,12 +2,19 @@ import numpy as np
 import open3d as o3d
 import regex as rg
 
-from enum import Enum
+from enum import IntEnum
 from sklearn.decomposition import PCA
 
-class S_O_I(Enum):
+class S_O_I(IntEnum):
     Superior = 0
     Inferior = 1
+
+    @classmethod
+    def from_str(cls, str):
+        s_o_i = cls.Superior
+        if rg.search("(lower|_l|_d)",str) != None:
+            s_o_i = cls.Inferior
+        return s_o_i
 
 def is_soi(stem:str):
     s_o_i = S_O_I.Superior
@@ -15,7 +22,10 @@ def is_soi(stem:str):
         s_o_i = S_O_I.Inferior
     return s_o_i
    
-def align_the_mesh(mesh, s_o_i:S_O_I):
+def align_the_mesh(mesh): # 不要, s_o_i:S_O_I):
+    """
+    这段代码是小林的！致敬!
+    """
     assert mesh.vertex_normals is not None, "此Mesh应当有Vertex Normals！"
     # 点集中心
     points = np.asarray(mesh.vertices)
@@ -52,15 +62,14 @@ def align_the_mesh(mesh, s_o_i:S_O_I):
     x_axis = np.cross(y_axis,z_axis)
     trans_mat = np.stack([x_axis,y_axis,z_axis],axis=0)
 
+    # 最终决定,还是不用空间来区分，而是用category来区分！
+    # if s_o_i == S_O_I.Superior: #如果上牙列,绕z舟转180度!
+    #     angle_radians = np.pi
+    #     R_z = np.array([[np.cos(angle_radians), -np.sin(angle_radians), 0],
+    #                     [np.sin(angle_radians), np.cos(angle_radians), 0],
+    #                     [0, 0, 1]])
+    #     trans_mat = np.dot(trans_mat, R_z)
     mesh.vertices = o3d.utility.Vector3dVector(points)
-
-    if s_o_i == S_O_I.Superior: #如果上牙列,绕z舟转180度!
-        angle_radians = np.pi
-        R_z = np.array([[np.cos(angle_radians), -np.sin(angle_radians), 0],
-                        [np.sin(angle_radians), np.cos(angle_radians), 0],
-                        [0, 0, 1]])
-        trans_mat = np.dot(trans_mat, R_z)
-
     mesh.rotate(trans_mat)
     mesh.compute_vertex_normals()
     return mesh, trans_mat

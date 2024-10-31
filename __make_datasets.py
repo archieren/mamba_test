@@ -6,7 +6,7 @@ import open3d as o3d
 
 from datasets import Dataset
 from pathlib import Path
-from pm.utils.align_the_mesh import align_the_mesh, is_soi
+from pm.utils.align_the_mesh import align_the_mesh
 
 """
 看来数据集的制作,在刚开始的时候,真的,走了弯路.或许,情有可原,我考虑的是没有下采样的情况.
@@ -50,7 +50,7 @@ def collect_group_with_aligned_data(source_dir:Path, stems:list[str]):
     for stem in stems:
         mesh, label_ = get_labeled_data(source_dir, stem)
         # 对齐            
-        mesh, _ = align_the_mesh(mesh, is_soi(stem))
+        mesh, _ = align_the_mesh(mesh)
 
         seg = label_.get("seg")                       # 简单考虑{"seg" -> {"tooth-id"-> [index_of_vertex]}} 或 {"tooth-id"-> [index_of_vertex]}
         label_ = seg if seg is not None else label_    

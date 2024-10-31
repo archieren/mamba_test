@@ -6,7 +6,7 @@ import torch.nn as nn
 
 from addict import Dict
 from torch import Tensor
-from einops import rearrange,einsum
+from einops import rearrange,repeat
 from pm.utils.misc import offset2batch,batch2offset
 from mamba_ssm.modules.mamba_simple import Mamba
 
@@ -89,6 +89,7 @@ class MixerLayers(nn.Module):
 class PointSIS_Feature_Extractor(nn.Module):
     def __init__(self, config:PointSISConfig):
         super().__init__()
+        self.num_group = config.num_group
         self.order = [config.order] if isinstance(config.order, str) else config.order
         self.shuffle_orders = config.shuffle_orders
         self.config = config
@@ -98,8 +99,8 @@ class PointSIS_Feature_Extractor(nn.Module):
         self.mixers = nn.ModuleList([MixerLayers(d_model=config.d_model, depth= d, mamba_config=config.mamba_config)
                                      for d in config.depth])
         
-        self.fuse_e = nn.Sequential(                                 # 将两个嵌入编码融合！
-            nn.Linear(config.feature_dims+config.pos_dims, config.feature_dims),
+        self.fuse_e = nn.Sequential(                                 # 将两个及范畴嵌入编码融合！
+            nn.Linear(config.feature_dims+config.pos_dims+config.feature_dims, config.feature_dims),
             nn.LayerNorm(config.feature_dims),
             nn.GELU(),                                               # TODO：看看融合后，要不要激活函数                           
             nn.Linear(config.feature_dims, config.d_model)
@@ -110,26 +111,30 @@ class PointSIS_Feature_Extractor(nn.Module):
             nn.LayerNorm(config.d_model),
             nn.GELU(),                                               # TODO：看看融合后，要不要激活函数
             nn.Linear(config.d_model, config.d_model)
-        )        
+        )
+        self.category = nn.Linear(config.d_cat, config.feature_dims)  # 输入的数据范畴,目前只有有上下之分！      
 
 
-    def forward(self, s_pc:PointCloud):                     
+    def forward(self, s_pc:PointCloud):                    
         # s_意味着初始下采样，已经做了
         # TODO：后面的多尺度下采样，看情况再做！
         s_pc.serialization(order=self.order, shuffle_orders=self.shuffle_orders)        
-        s_feat  = s_pc.feat   # (b g) N 3  
+        s_feat  = s_pc.feat   # (b g) 4  # normals 有三个分量, point_curvature占一个分量！
         s_coord = s_pc.coord   # (b g) 3
         s_order = s_pc.serialized_order   # o (b g)
-        s_inverse = s_pc.serialized_inverse  # o (b g)      
-        
+        s_inverse = s_pc.serialized_inverse  # o (b g)
+        s_s_o_i = s_pc.s_o_i                 # b     # s_o_i
+
         b_s = s_pc.batch[-1]+1
         o_s = len(self.order)        
         # s_order, s_inverse 均为 order_size batch_size*num_group
         s_coord = self.pos_encoder(s_coord)                # (b g) N 3 => (b g) d    # 每层共用这个位置编码！
+        s_s_o_i = self.category(repeat(s_s_o_i, "b -> (b g) 1", g = self.num_group)) # b -> (b g) d
+
         hidden_state = self.feature_encoder(s_feat)              # => (b g) d 
         hidden_states =[]
         for _ , mixlayer in enumerate(self.mixers):        
-            hidden_state = torch.cat([hidden_state, s_coord], dim= -1)               # => (b g) (d*2)  # TODO: 每次融入坐标的嵌入，应当不变！
+            hidden_state = torch.cat([hidden_state, s_coord, s_s_o_i], dim= -1)      # => (b g) (d*3)  # TODO: 每次融入坐标的嵌入及范畴的嵌入，应当不变！
             hidden_state = self.fuse_e(hidden_state)                                 # 融合各编码 => (b g) d
             hidden_state = hidden_state.unsqueeze(0).repeat(o_s,1,1)                 # 为每种排序准备排序的数据,(b g) d => o (b g) d
             hidden_state = torch_scatter.scatter(hidden_state,index=s_order, dim=1)  # 排序: o (b g) d, o (b g) => o (b g) d       

@@ -163,23 +163,24 @@ class Mamba1Config:     # 抄自 Mamba1的初始化参数!!!
     d_conv:  int = 4
     expand:  int = 2     # E in paper/comments
 
-    dt_rank:    Union[int, str] = 'auto'
-    dt_min:     float = 0.001
-    dt_max:     float = 0.1
-    dt_init:    str = "random" # "random" or "constant"
-    dt_scale:   float = 1.0
-    dt_init_floor: float = 1e-4
+    # dt_rank:    Union[int, str] = 'auto'
+    # dt_min:     float = 0.001
+    # dt_max:     float = 0.1
+    # dt_init:    str = "random" # "random" or "constant"
+    # dt_scale:   float = 1.0
+    # dt_init_floor: float = 1e-4
 
-    conv_bias: bool = True
-    bias:      bool = False
-    use_fast_path: bool = True  # Fused kernel options
+    # conv_bias: bool = True
+    # bias:      bool = False
+    # use_fast_path: bool = True  # Fused kernel options
 
     #layer_idx = None
-    device    = None
-    dtype     = None
+    # device    = None
+    # dtype     = None
 
 @dataclass
 class PointSISConfig():
+        d_cat:        int=1      # 数据的范畴
         in_channels:  int = 3
         # About SFC
         #Spatial Filling Curve!
@@ -200,7 +201,7 @@ class PointSISConfig():
         #Follow MLP 
         # AboutGroup
         group_ratio:  float = 0.09 # 按ratio方式下采样！
-        num_group:    int = 8096 # 4096 # 8172 # 16384
+        num_group:    int = 16384 # 4096 # 8172 # 16384
         group_size:   int = 11  # 邻居个数       
         depth             = [3, 2, 3, 2] # 每层的mamba堆叠深度！！！
         #out_indices       = [3, 7, 11]   # 弃用！

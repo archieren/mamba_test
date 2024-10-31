@@ -8,7 +8,7 @@ import torch
 from addict import Dict
 from datasets import Dataset
 from pathlib import Path
-from pm.utils.align_the_mesh import align_the_mesh, is_soi
+from pm.utils.align_the_mesh import align_the_mesh
 from pm.utils.point_cloud import Grouper_By_NumGroup
 from pm.utils.point_cloud import PointCloud
 
@@ -65,7 +65,7 @@ def collect_group_with_aligned_and_sampled_data(source_dir:Path, stems:list[str]
         print(stem)
         mesh, label_ = get_labeled_data(source_dir, stem)
         # 对齐            
-        mesh, _ = align_the_mesh(mesh, is_soi(stem))
+        mesh, _ = align_the_mesh(mesh)
         vertices, _ , normals, label = get_data(mesh, label_)
 
         offset = torch.tensor([vertices.shape[0]], device=device).cumsum(0).int()
@@ -100,6 +100,8 @@ def collect_group_with_aligned_and_sampled_data(source_dir:Path, stems:list[str]
 def make_parquet_with_aligned_sampled_data(source_dir:Path, out_dir="data", group_size = 400,clx="train"):
     stems=[ stl_item.stem for stl_item in source_dir.glob("*.stl")]
     total_examples = len(stems)
+    print(total_examples)
+    return
     group_size = group_size
     file_numbers = math.ceil(total_examples/group_size)
     for i in range(file_numbers):
@@ -123,7 +125,7 @@ def make_train_dataset_with_aligned_sampled_data():
     make_parquet_with_aligned_sampled_data(source_dir=source_dir,out_dir=out_dir,group_size=group_size, clx="train")
 
 make_train_dataset_with_aligned_sampled_data()
-
+make_test_dataset_with_aligned_sampled_data()
 
 
 

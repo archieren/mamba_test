@@ -336,12 +336,14 @@ def __samples(parent_pc:PointCloud, s_idx:torch.Tensor, s_offset:torch.Tensor, g
                   shape_weight=shape_weight,
                   labels=s_lables,
                   offset=s_offset,
+                  s_o_i=parent_pc.s_o_i,
                   grid_size=parent_pc.grid_size,                                            # 用父点云的grid_size
                   index_back_to_parent=s_idx)         
     else:
         s_data = Dict(coord=s_xyz, 
                     feat=s_n,
                     offset=s_offset,
+                    s_o_i=parent_pc.s_o_i,
                     grid_size=parent_pc.grid_size,                                            # 用父点云的grid_size
                     index_back_to_parent=s_idx)                                               # 用于构造一个新的点集！
     return PointCloud(s_data)

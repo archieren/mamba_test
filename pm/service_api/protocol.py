@@ -15,6 +15,7 @@ def str_to_file_bytes(str:str):
 class SegRequest(BaseModel):
     stl:str
     threshhold:float = 0.5
+    s_o_i:str               # 用于判断是上下否！ superior or inferior
 
 class SegResponse(BaseModel):
     seg_result:Dict[str, List[int]]

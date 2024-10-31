@@ -14,7 +14,9 @@ from pathlib import Path
 from pm.pointmamba import PointSIS_Seg_Model, make_default_config
 from pm.service_api.protocol import SegRequest, SegResponse, str_to_file_bytes
 from pm.utils.point_cloud import PointCloud
+from pm.utils.align_the_mesh import align_the_mesh,S_O_I
 from pm.pointmamba.conifuguration_point_sis import TEETH_cls_num
+
 
 
 device='cuda'
@@ -75,13 +77,15 @@ def read_oral_scan_mesh_from_stl_in_str(str):
     os.remove(temp_file.name)
     return oral_scan_mesh
 
-def make_data_dict(mesh:o3d.geometry.TriangleMesh):
+def make_data_dict(mesh:o3d.geometry.TriangleMesh, s_o_i:str):
+    s_o_i = S_O_I.from_str(s_o_i)
     # dtype=torch.float是必要的!!!
+    mesh, _ = align_the_mesh(mesh) 
     points = torch.asarray(np.asarray(mesh.vertices), device=device, dtype=torch.float)
     # points = points - torch.mean(points)  # TODO:好像,我还没将中心统一吧。
     normals = torch.asarray(np.asarray(mesh.vertex_normals), device=device,dtype=torch.float) 
     offset = torch.tensor([points.shape[0]], device=device).cumsum(0).int() # cumsum就成了浮点数了!
-    data = Dict(coord=points,feat=normals, offset=offset, grid_size=1.0e-2)
+    data = Dict(coord=points,feat=normals, offset=offset, s_o_i=s_o_i, grid_size=1.0e-2)
     return data    
 
 def read_result(pc:PointCloud, threshold:float):
@@ -109,9 +113,9 @@ def read_result(pc:PointCloud, threshold:float):
                 
     return seg_result
 
-def seg(str:str):
+def seg(stl:str):
     with torch.no_grad():
-        mesh = read_oral_scan_mesh_from_stl_in_str(str)
+        mesh = read_oral_scan_mesh_from_stl_in_str(stl)
         dc = make_data_dict(mesh)
         pred = model(PointCloud(dc))
     return pred
