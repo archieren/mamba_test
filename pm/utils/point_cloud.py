@@ -321,31 +321,23 @@ def __samples(parent_pc:PointCloud, s_idx:torch.Tensor, s_offset:torch.Tensor, g
     # s_n = s_n - s_xyz.unsqueeze(1)                                                         # (b g) N 3 or n_1+n_2+...+n_b N 3 
     # s_n = torch.cat([s_xyz.unsqueez(1), s_n], dim= 1)                                        # (b g) (N+1) 3 or n_1+n_2+...+n_b (N+1) 3
     # 由于__samples看起来只用一次，我假设 feat将会是 vertex_normals!有normals，就用曲率！
-    shape_weight = None
+    s_data = Dict(coord=s_xyz,
+            offset=s_offset, 
+            grid_size=parent_pc.grid_size,                                            # 用父点云的grid_size
+            index_back_to_parent=s_idx)
+
     if "feat" in parent_pc.keys():                                                              # 目前，feat就是 normals！
         s_feat = parent_pc.feat[s_idx]                                                          # (b g) 3 or n_1+n_2+...+n_b 3
         s_n_feat = parent_pc.feat[s_n_idx]                                                      # (b g) N 3 or n_1+n_2+...+n_b N 3
         p_curvature = point_curvature(s_feat.unsqueeze(1), s_n_feat)                            # (b g) 1 or n_1+n_2+...+n_b 1
         shape_weight = torch.where(p_curvature > radians_of_five_degrees, 1, 0).squeeze(-1)     # 大概在百分位40%左右！              
-        s_n  = torch.cat([s_feat, p_curvature], dim=-1)                                         # (b g) 4 or n_1+n_2+...+n_b 4
-
+        s_n  = torch.cat([s_feat, p_curvature], dim=-1)                                         # (b g) 4 or n_1+n_2+...+n_b 4    
+        s_data.update(feat=s_n,shape_weight=shape_weight)         
     if "labels" in parent_pc.keys():                                                           # 如果是有训练的数据
-        s_lables = parent_pc.labels[s_idx]                                                     # (b g) or n_1+n_2+...+n_b
-        s_data = Dict(coord=s_xyz, 
-                  feat=s_n,
-                  shape_weight=shape_weight,
-                  labels=s_lables,
-                  offset=s_offset,
-                  s_o_i=parent_pc.s_o_i,
-                  grid_size=parent_pc.grid_size,                                            # 用父点云的grid_size
-                  index_back_to_parent=s_idx)         
-    else:
-        s_data = Dict(coord=s_xyz, 
-                    feat=s_n,
-                    offset=s_offset,
-                    s_o_i=parent_pc.s_o_i,
-                    grid_size=parent_pc.grid_size,                                            # 用父点云的grid_size
-                    index_back_to_parent=s_idx)                                               # 用于构造一个新的点集！
+        s_lables = parent_pc.labels[s_idx] 
+        s_data.update(labels=s_lables)                                                          # (b g) or n_1+n_2+...+n_b    
+    if "s_o_i" in parent_pc.keys():
+        s_data.update(s_o_i=parent_pc.s_o_i)
     return PointCloud(s_data)
 
 

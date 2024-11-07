@@ -55,7 +55,7 @@ m_config = make_default_config()
 checkpoints_file = __get_ckpt()
 
 model = MODE_CLS(m_config)
-load_model(checkpoints_file, model)
+load_model(checkpoints_file, model.model)      # HACK: XXX: FIXME: TODO:
 
 model= model.to(device)
 model.train(False)
@@ -85,6 +85,7 @@ def make_data_dict(mesh:o3d.geometry.TriangleMesh, s_o_i:str):
     # points = points - torch.mean(points)  # TODO:好像,我还没将中心统一吧。
     normals = torch.asarray(np.asarray(mesh.vertex_normals), device=device,dtype=torch.float) 
     offset = torch.tensor([points.shape[0]], device=device).cumsum(0).int() # cumsum就成了浮点数了!
+    s_o_i = torch.tensor([s_o_i], device=device).float()
     data = Dict(coord=points,feat=normals, offset=offset, s_o_i=s_o_i, grid_size=1.0e-2)
     return data    
 
@@ -110,13 +111,16 @@ def read_result(pc:PointCloud, threshold:float):
                 t_num = TEETH_cls_num[values[j]]
                 (one_teeth_seg,)= np.where(feat[:, indices[j]] > threshold)
                 seg_result[f'{t_num}'] = one_teeth_seg.tolist()
+            if values[j] in {33, 34, 35, 36}: # TODO: 牙龈， 合并的牙齿！
+                (one_teeth_seg,)= np.where(feat[:, indices[j]] > threshold)
+                seg_result[f'{values[j]+200}'] = one_teeth_seg.tolist()                
                 
     return seg_result
 
-def seg(stl:str):
+def seg(stl:str, s_o_i:str):
     with torch.no_grad():
         mesh = read_oral_scan_mesh_from_stl_in_str(stl)
-        dc = make_data_dict(mesh)
+        dc = make_data_dict(mesh, s_o_i)
         pred = model(PointCloud(dc))
     return pred
 
@@ -124,14 +128,8 @@ pm_router = APIRouter(prefix="/segment")
 @pm_router.post("/file")
 def oral_scan_seg(req:SegRequest) -> SegResponse:
     threshhold = req.threshhold
-    pred = seg(req.stl)
+    s_o_i = req.s_o_i
+    pred = seg(req.stl, s_o_i)
     result = read_result(pred, threshold=threshhold)
     res = SegResponse(seg_result=result)
     return res
-
-    
-        
-
-        
-
-

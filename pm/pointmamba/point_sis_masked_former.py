@@ -133,7 +133,7 @@ class PointSIS_Feature_Extractor(nn.Module):
 
         hidden_state = self.feature_encoder(s_feat)              # => (b g) d 
         hidden_states =[]
-        for _ , mixlayer in enumerate(self.mixers):        
+        for _ , mixlayer in enumerate(self.mixers):      
             hidden_state = torch.cat([hidden_state, s_coord, s_s_o_i], dim= -1)      # => (b g) (d*3)  # TODO: 每次融入坐标的嵌入及范畴的嵌入，应当不变！
             hidden_state = self.fuse_e(hidden_state)                                 # 融合各编码 => (b g) d
             hidden_state = hidden_state.unsqueeze(0).repeat(o_s,1,1)                 # 为每种排序准备排序的数据,(b g) d => o (b g) d
@@ -199,59 +199,6 @@ class PointSIS_Encoder(nn.Module):
             level_feat[idx] = feat
         s_pc.feat = level_feat
         return s_pc
-
-
-# class PointSIS_Seg_Model(nn.Module):
-#     def __init__(self, config:PointSISConfig):
-#         super().__init__()
-#         self.grouper = Grouper_By_NumGroup(config.num_group, config.group_size)
-#         self.pointsis_feature_extractor = PointSIS_Feature_Extractor(config)
-#         self.point_encoder = PointSIS_Encoder(config)
-#         self.mask_decoder = MaskDecoder(config)
-#         #
-#         self.num_queries = config.num_queries
-#         self.query_embedder = nn.Embedding(config.num_queries, config.d_model)        # 可学习的查询！
-#         self.query_position_embedder = nn.Embedding(config.num_queries, config.d_model)   # TODO：位置也是可学习的？？？ Mask2Former就是如此！！！
-#         #
-#         self.class_predict = nn.Linear(config.d_model, config.num_labels+1)
-#         self.feat_propagation = FeatPropagation(config.group_size)
-#         #        
-#         self.loss = PMLoss(config)
-
-#     def forward(self, parent_pc:PointCloud):
-#         # TODO: 中间数据其实都在s_pc中,应当搞个说明!
-#         s_pc = self.grouper(parent_pc)             # "coord,feat,offset,grid_size,index_back_to_parent"可用，"labels,shape_weight"看情况!
-#         #
-#         s_pc = self.pointsis_feature_extractor(s_pc)
-#         #
-#         s_pc = self.point_encoder(s_pc)
-#         b_s = s_pc.batch[-1]+1
-#         #
-#         query_embeddings = self.query_embedder.weight.unsqueeze(0).repeat(b_s, 1, 1)
-#         query_position_embeddings = self.query_position_embedder.weight.unsqueeze(0).repeat(b_s, 1, 1)
-#         point_embedding = s_pc.feat[-1]
-#         encoder_hidden_states = s_pc.feat[0:-1]
-#         # TODO:有个问题,mask_decoder的参数point_embedding,encoder_hidden_states是否需要序列化?在Transformer机制下，可以先不考虑?作也容易！
-#         pred_mask, q = self.mask_decoder(                               # -> b q g , b q d
-#                             query_embeddings = query_embeddings,
-#                             query_position_embeddings= query_position_embeddings,
-#                             point_embeddings = point_embedding,
-#                             encoder_hidden_states= encoder_hidden_states)
-
-#         pred_probs = self.class_predict(q)                             # b q d -> b q l      # l代表num_labels+1
-#         if "labels" in s_pc.keys():    # 如果有标签，就计算loss！！！
-#             labels = rearrange(s_pc.labels, "(b g) -> b g", b=b_s)
-#             shape_weight = rearrange(s_pc.shape_weight, "(b g) -> b g", b=b_s) if s_pc.shape_weight is not None else None
-#             m_i = self.loss(pred_mask,pred_probs,labels, shape_weight)  # 
-#             parent_pc.loss = m_i
-#         pred_mask = rearrange(pred_mask,"b q g -> b g q")
-#         pred_mask = rearrange(pred_mask, "b g q -> (b g) q")
-#         s_pc.feat = pred_mask.contiguous()       # TODO:老问题 s_pc的feat过载太多，看怎么清晰一下！！！ 这个contiguous还必须！
-#         feat = self.feat_propagation(parent_pc, s_pc)
-#         parent_pc.feat = feat
-#         parent_pc.pred_probs = pred_probs
-#         del s_pc
-#         return parent_pc
     
 class PointSIS_Seg(nn.Module):
     """
@@ -272,8 +219,8 @@ class PointSIS_Seg(nn.Module):
         self.loss = PMLoss(config)
 
     def forward(self, s_pc:PointCloud):
-        # s_pc: "coord,feat,offset,grid_size,index_back_to_parent"可用，"labels,shape_weight"看情况!
-        #
+        # s_pc: "coord,feat,offset,grid_size,index_back_to_parent,s_o_i"可用，"labels,shape_weight"看情况!
+        # 关于s_o_i,必须注意,将输入调整到统一的姿势,最终看来,还是必要的!
         s_pc = self.pointsis_feature_extractor(s_pc)
         #
         s_pc = self.point_encoder(s_pc)

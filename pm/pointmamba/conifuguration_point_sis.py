@@ -201,7 +201,7 @@ class PointSISConfig():
         #Follow MLP 
         # AboutGroup
         group_ratio:  float = 0.09 # 按ratio方式下采样！
-        num_group:    int = 16384 # 4096 # 8172 # 16384
+        num_group:    int = 32768 # 4096 # 8172 # 16384
         group_size:   int = 11  # 邻居个数       
         depth             = [3, 2, 3, 2] # 每层的mamba堆叠深度！！！
         #out_indices       = [3, 7, 11]   # 弃用！

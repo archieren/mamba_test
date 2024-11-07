@@ -521,8 +521,6 @@ class PMLoss(nn.Module):
               masks.
             - **loss_dice** -- The loss computed using dice loss on the predicted on the predicted and ground truth
               masks.
-            if `use_auxiliary_loss` was set to `true` in [`M2FConfig`], the dictionary contains additional
-            losses for each auxiliary predictions.
         """
         class_labels, mask_labels, shape_weights = tooth_lables(labels,shape_weight)
 

@@ -32,7 +32,7 @@ torch.backends.cudnn.benchmark = False
 
 #参数：TODO
 epoches = 1000
-batch_size = 2
+batch_size = 1
 
 def time_it(start_time):
     stop_time = time.time()

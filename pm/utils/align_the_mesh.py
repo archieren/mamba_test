@@ -16,13 +16,13 @@ class S_O_I(IntEnum):
             s_o_i = cls.Inferior
         return s_o_i
 
-def is_soi(stem:str):
+def is_soi(stem:str):   # TODO:口扫模型的名字,需要约定一下！
     s_o_i = S_O_I.Superior
     if rg.search("(lower|_l|_d)",stem) != None:
         s_o_i = S_O_I.Inferior
     return s_o_i
    
-def align_the_mesh(mesh): # 不要, s_o_i:S_O_I):
+def align_the_mesh(mesh:o3d.geometry.TriangleMesh): # 不要, s_o_i:S_O_I):
     """
     这段代码是小林的！致敬!
     """
@@ -41,6 +41,7 @@ def align_the_mesh(mesh): # 不要, s_o_i:S_O_I):
     pca.fit(points)
     mat = pca.components_
 
+    #TODO:还未弄清楚，如何解读几个轴的含义.
     #判断是否反向（Z轴）
     if np.dot(mat[2], mean_nvec) < 0:
         z_axis = - mat[2]

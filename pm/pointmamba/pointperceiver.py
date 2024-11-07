@@ -11,4 +11,5 @@ from pm.pointmamba.conifuguration_point_sis import  PointSISConfig
 """
 在point_sis里,对数据的泛化适应能力,不强!
 也许在输入的时候,加入Perceiver或Perceive IO结构,情况会发生变化!
+期望什么呢?
 """

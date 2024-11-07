@@ -8,6 +8,7 @@ import torch
 from addict import Dict
 from datasets import Dataset
 from pathlib import Path
+from pm.pointmamba import make_default_config
 from pm.utils.align_the_mesh import align_the_mesh
 from pm.utils.point_cloud import Grouper_By_NumGroup
 from pm.utils.point_cloud import PointCloud
@@ -60,7 +61,9 @@ def collect_group_with_aligned_and_sampled_data(source_dir:Path, stems:list[str]
     shape_weight_c = []
     offset_c = []
     name_c = []
-    grouper = Grouper_By_NumGroup(num_group=16384, group_size=11)   # TODO:应当从configuration_point_sis中去取
+
+    m_config = make_default_config()
+    grouper = Grouper_By_NumGroup(num_group=m_config.num_group, group_size=11)
     for stem in stems:
         print(stem)
         mesh, label_ = get_labeled_data(source_dir, stem)
@@ -93,16 +96,13 @@ def collect_group_with_aligned_and_sampled_data(source_dir:Path, stems:list[str]
         label_c.append(label)
         shape_weight_c.append(shape_weight)
         offset_c.append(offset)
-        name_c.append(stem)
+        name_c.append(stem)   # TODO: 要不要搞成s_o_i呢？
 
     return {"coord":coord_c, "feat":feat_c,"label":label_c,"shape_weight":shape_weight_c,"offset":offset_c,"name":name_c}
 
 def make_parquet_with_aligned_sampled_data(source_dir:Path, out_dir="data", group_size = 400,clx="train"):
     stems=[ stl_item.stem for stl_item in source_dir.glob("*.stl")]
     total_examples = len(stems)
-    print(total_examples)
-    return
-    group_size = group_size
     file_numbers = math.ceil(total_examples/group_size)
     for i in range(file_numbers):
         stems_part = stems[group_size*i:group_size*(i+1)]
