@@ -111,9 +111,9 @@ def read_result(pc:PointCloud, threshold:float):
                 t_num = TEETH_cls_num[values[j]]
                 (one_teeth_seg,)= np.where(feat[:, indices[j]] > threshold)
                 seg_result[f'{t_num}'] = one_teeth_seg.tolist()
-            if values[j] in {33, 34, 35, 36}: # TODO: 牙龈， 合并的牙齿！
-                (one_teeth_seg,)= np.where(feat[:, indices[j]] > threshold)
-                seg_result[f'{values[j]+200}'] = one_teeth_seg.tolist()                
+            # if values[j] in {33, 34, 35, 36}: # TODO: 牙龈， 合并的牙齿！
+            #     (one_teeth_seg,)= np.where(feat[:, indices[j]] > threshold)
+            #     seg_result[f'{values[j]+200}'] = one_teeth_seg.tolist()                
                 
     return seg_result
 
