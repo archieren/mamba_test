@@ -31,7 +31,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 #参数：TODO
-epoches = 1000
+epoches = 2000
 batch_size = 1
 
 def time_it(start_time):
@@ -39,7 +39,7 @@ def time_it(start_time):
     print("耗时: {:.2f}秒".format(stop_time - start_time))
     return
 
-def bi_cls(x, *y):  # 没想明白*y！
+def bi_cls(x, *y):  # FIXME: 没想明白*y！
     if x > 0 : return int(x)
     else: return int(0)
 
@@ -128,8 +128,8 @@ def train():
     
     model= model.to(device)
     
-    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-5)
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[900], gamma=0.2)
+    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=5e-5)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[900,], gamma=0.2)
     
     for epoch in range(epoches):
         model= model.train()

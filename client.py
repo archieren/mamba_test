@@ -4,7 +4,7 @@ from pathlib import Path
 from pm.service_api.protocol import SegRequest,file_bytes_to_str
 
 root = "/home/archie/Projects/data/TestSet/ATA-TestSample"
-# http_url = "http://106.13.35.169:8001/v1/segment/file"
+#http_url = "http://106.13.35.169:8001/v1/segment/file"
 http_url = "http://127.0.0.1:8001/v1/segment/file"
 
 def time_it(start_time):

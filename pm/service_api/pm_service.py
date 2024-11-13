@@ -15,7 +15,7 @@ from pm.pointmamba import PointSIS_Seg_Model, make_default_config
 from pm.service_api.protocol import SegRequest, SegResponse, str_to_file_bytes
 from pm.utils.point_cloud import PointCloud
 from pm.utils.align_the_mesh import align_the_mesh,S_O_I
-from pm.pointmamba.conifuguration_point_sis import TEETH_cls_num
+from pm.pointmamba.conifuguration_point_sis import TEETH
 
 
 
@@ -108,7 +108,7 @@ def read_result(pc:PointCloud, threshold:float):
         seg_result = {}
         for j in range(len(indices)):
             if values[j] < 33 :
-                t_num = TEETH_cls_num[values[j]]
+                t_num = TEETH.TEETH_cls_num[values[j]]
                 (one_teeth_seg,)= np.where(feat[:, indices[j]] > threshold)
                 seg_result[f'{t_num}'] = one_teeth_seg.tolist()
             # if values[j] in {33, 34, 35, 36}: # TODO: 牙龈， 合并的牙齿！

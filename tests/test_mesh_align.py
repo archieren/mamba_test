@@ -35,6 +35,14 @@ def oral_scan_align(stem:str):
     # 创建并显示可视化窗口
     o3d.visualization.draw_geometries([mesh, frame_o, frame], point_show_normal=True)
 
+    # points = np.asarray(mesh.vertices)
+    # #points[:, 0] = 0
+    # print(points.max(0), points.min(0))
+    # t_1 = o3d.geometry.PointCloud()
+    # t_1.points = o3d.utility.Vector3dVector(points)
+    # #t_1.colors = o3d.utility.Vector3dVector(colors_1)
+    # o3d.visualization.draw_geometries([t_1])
+
 for stem in stems:
     #if stem == "lower0061":
     print(stem)

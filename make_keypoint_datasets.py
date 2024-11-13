@@ -5,23 +5,6 @@ import open3d as o3d
 
 from pathlib import Path
 
-#这一段，half-manual
-def gather_unlabeled_data(source_dir:Path, target_dir:Path):  # 将未标注的 stl移到一个目录！！
-    target_dir.mkdir(exist_ok=True)
-    for item_stl in source_dir.glob("*.stl"):
-        parent = item_stl.parent
-        stem = item_stl.stem
-        item_json = parent / (stem + ".json")
-        if not item_json.exists() :   # 对应的标注文件是否存在？ 不存在，就移到target_dir
-            to_item_stl = target_dir / item_stl.name
-            item_stl.rename(to_item_stl)  # 重命名的方式，进行移动！
-
-#### Gather_labelled_data
-# dir_ = Path("/home/archie/Projects/data/口扫模型/模型测量关键点---/原始数据")
-# temp_ = Path("/home/archie/Projects/data/口扫模型/模型测量关键点---/temp")
-# gather_unlabeled_data(source_dir=dir_, target_dir= temp_)
-#----这一段，half-manual
-
 def get_labeled_data(source_dir:Path, stem:str):   # 假设做了前期处理！！！
     json_item_path = source_dir / (stem + ".json")
     label = json.load(json_item_path.open())

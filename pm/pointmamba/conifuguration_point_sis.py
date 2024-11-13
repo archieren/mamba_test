@@ -2,86 +2,52 @@ import math
 import torch
 
 from dataclasses import dataclass, asdict
-from typing import Union,List
+from typing import Union,List, ClassVar
 
 TEETH_num = {18,17,16,15,14,13,12,11,
              28,27,26,25,24,23,22,21,
              38,37,36,35,34,33,32,31,
              48,47,46,45,44,43,42,41}
 
-TEETH_num_cls = {18: 8,
-                 17: 7,
-                 16: 6,
-                 15: 5,
-                 14: 4,
-                 13: 3,
-                 12: 2,
-                 11: 1,
-                 28:16,
-                 27:15,
-                 26:14,
-                 25:13,
-                 24:12,
-                 23:11,
-                 22:10,
-                 21: 9,
-                 38:24,
-                 37:23,
-                 36:22,
-                 35:21,
-                 34:20,
-                 33:19,
-                 32:18,
-                 31:17,
-                 48:32,
-                 47:31,
-                 46:30,
-                 45:29,
-                 44:28,
-                 43:27,
-                 42:26,
-                 41:25}
+# FIXME:牙齿的实例和类究竟是是个什么关系呢？
+# 一个牙齿一类!
+# @dataclass
+# class TEETH:
+#     # 牙编号到类号
+#     TEETH_num_cls :ClassVar[dict[int,int]]  = { 18: 8, 17: 7, 16: 6, 15: 5, 14: 4, 13: 3, 12: 2, 11: 1,
+#                                                 28:16, 27:15, 26:14, 25:13, 24:12, 23:11, 22:10, 21: 9,
+#                                                 38:24, 37:23, 36:22, 35:21, 34:20, 33:19, 32:18, 31:17,
+#                                                 48:32, 47:31, 46:30, 45:29, 44:28, 43:27, 42:26, 41:25}
+#                                 # 类号到牙编号
+#     TEETH_cls_num  :ClassVar[dict[int,int]] = {  8:18,  7:17,  6:16,  5:15,  4:14,  3:13,  2:12,  1:11,
+#                                                 16:28, 15:27, 14:26, 13:25, 12:24, 11:23, 10:22,  9:21,
+#                                                 24:38, 23:37, 22:36, 21:35, 20:34, 19:33, 18:32, 17:31,
+#                                                 32:48, 31:47, 30:46, 29:45, 28:44, 27:43, 26:42, 25:41}
 
-TEETH_cls_num = { 8:18,
-                  7:17,
-                  6:16,
-                  5:15,
-                  4:14,
-                  3:13,
-                  2:12,
-                  1:11,
-                 16:28,
-                 15:27,
-                 14:26,
-                 13:25,
-                 12:24,
-                 11:23,
-                 10:22,
-                  9:21,
-                 24:38,
-                 23:37,
-                 22:36,
-                 21:35,
-                 20:34,
-                 19:33,
-                 18:32,
-                 17:31,
-                 32:48,
-                 31:47,
-                 30:46,
-                 29:45,
-                 28:44,
-                 27:43,
-                 26:42,
-                 25:41}
+#     superior_gingival :ClassVar[int] = 33
+#     inferior_gingival :ClassVar[int] = 34
 
-superior_gingival = 33
-inferior_gingival = 34
+#     superior_dentition :ClassVar[int] = 35
+#     inferior_dentition :ClassVar[int] = 36
 
-superior_dentition= 35
-inferior_dentition= 36
+#     all_classes :ClassVar[int]  = 36
 
-all_classes = 36
+# 所有牙齿都归为一类
+@dataclass
+class TEETH:
+    # 牙编号到类号
+    TEETH_num_cls :ClassVar[dict[int,int]]  = { 18: 1, 17: 1, 16: 1, 15: 1, 14: 1, 13: 1, 12: 1, 11: 1,
+                                                28: 1, 27: 1, 26: 1, 25: 1, 24: 1, 23: 1, 22: 1, 21: 1,
+                                                38: 1, 37: 2, 36: 2, 35: 2, 34: 2, 33: 2, 32: 2, 31: 2,
+                                                48: 1, 47: 2, 46: 2, 45: 2, 44: 2, 43: 2, 42: 2, 41: 2}
+
+    superior_gingival :ClassVar[int] = 3
+    inferior_gingival :ClassVar[int] = 4
+
+    superior_dentition :ClassVar[int] = 5
+    inferior_dentition :ClassVar[int] = 6
+
+    all_classes :ClassVar[int]  = 6
 
 kp_name_cls =   {'buccal':1,                # 颊(侧)点                               #6    #7       各2个
                 'buccal-cusp':2,            # 颊(侧)尖点                 #4    #5                   各1个
@@ -125,32 +91,32 @@ def tooth_lables(labels:torch.Tensor, shape_weight:torch.Tensor) -> List[torch.T
                 x = x.unsqueeze(0)
                 masks.append(x)
                 #
-                cls = TEETH_num_cls[i]                 # 牙编号 -> Class!
+                cls = TEETH.TEETH_num_cls[i]                 # 牙编号 -> Class!
                 class_labels.append(cls)
-                up_or_low="up" if i%10 < 2 else "low"  # 有点浪费, TODO:how?
+                up_or_low="up" if i//10 < 3 else "low"  # 有点浪费, TODO:how?
         #       
         non_tooth_mask = torch.where(labels[b]>0, 0, 1).unsqueeze(0)             # 牙龈
         if non_tooth_mask.sum()>0:
            #
            masks.append(non_tooth_mask)
            #
-           class_labels.append(superior_gingival if up_or_low == "up" else inferior_gingival)
+           class_labels.append(TEETH.superior_gingival if up_or_low == "up" else TEETH.inferior_gingival)
 
         all_tooth_mask = torch.where(labels[b]>0, 1, 0).unsqueeze(0)             # 所有牙齿
         if all_tooth_mask.sum()> 0:
             #
             masks.append(all_tooth_mask)
             #
-            class_labels.append(superior_dentition if up_or_low == "up" else inferior_dentition)
+            class_labels.append(TEETH.superior_dentition if up_or_low == "up" else TEETH.inferior_dentition)
 
         t = len(class_labels)
         class_labels = torch.tensor(class_labels, device= labels.device).long()   # [t,......]   
         b_class_labels.append(class_labels)
 
-        mask_labels = torch.cat(masks, dim=0).float()                             # [t g,...]      # TODO: 每个目标, 都有一个掩码！
+        mask_labels = torch.cat(masks, dim=0).float()                             # [t g,...]      # FIXME: 每个目标, 都有一个掩码！
         b_mask_labels.append(mask_labels)
 
-        shape_weights = s_w.repeat(t,1).float()                                     # [t g,...]     # TODO: 每个目标， 都有一个权重 
+        shape_weights = s_w.repeat(t,1).float()                                     # [t g,...]     # FIXME: 每个目标， 都有一个权重 
         b_shape_weights.append(shape_weights)
 
     return b_class_labels, b_mask_labels, b_shape_weights
@@ -213,7 +179,7 @@ class PointSISConfig():
         dim_feedforward:     int = 2048
         num_feature_levels:  int = 3
         num_decode_layers:   int = int(num_feature_levels*3)
-        num_labels:          int =  all_classes
+        num_labels:          int =  TEETH.all_classes
         num_queries:         int = 64             
         dropout:             float = 0.1
         ## About loss
