@@ -117,7 +117,7 @@ __global__ void ball_query_cuda_kernel(int m, int nsample,
         {
             int index = static_cast<int>(sep * i);
             idx[i] = candi_idx[index];
-            dist2[i] = candi_idx[index];
+            dist2[i] = candi_dist[index];
         }
     }
 }

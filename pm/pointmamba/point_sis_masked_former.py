@@ -135,25 +135,24 @@ class PointSIS_Feature_Extractor(nn.Module):
         hidden_states =[]
         
         #FIXME: 各路嵌入只需融合一次！
-        hidden_state = torch.cat([hidden_state, s_coord, s_s_o_i], dim= -1)      # => (b g) (d*3)  # TODO: 每次融入坐标的嵌入及范畴的嵌入，应当不变！
+        hidden_state = torch.cat([hidden_state, s_coord, s_s_o_i], dim= -1)      # => (b g) (d*3)  # FIXME: 一次够吗！
         hidden_state = self.fuse_e(hidden_state)                                 # 融合各编码 => (b g) d
 
         #TODO: 怎么作下采样呢？
-        for _ , mixlayer in enumerate(self.mixers):      
-            # hidden_state = torch.cat([hidden_state, s_coord, s_s_o_i], dim= -1)      # => (b g) (d*3)  # TODO: 每次融入坐标的嵌入及范畴的嵌入，应当不变！
-            # hidden_state = self.fuse_e(hidden_state)                                 # 融合各编码 => (b g) d
-            hidden_state = hidden_state.unsqueeze(0).repeat(o_s,1,1)                 # 为每种排序准备排序的数据,(b g) d => o (b g) d
+        for _ , mixlayer in enumerate(self.mixers):
             #将各排序拼接,走Mamba流程！
+            hidden_state = hidden_state.unsqueeze(0).repeat(o_s,1,1)                 # 为每种排序准备排序的数据,(b g) d => o (b g) d
             hidden_state = torch_scatter.scatter(hidden_state,index=s_order, dim=1)  # 排序: o (b g) d, o (b g) => o (b g) d       
-            hidden_state = rearrange(hidden_state, "o (b g) d -> b (o g) d", b=b_s)  # 将各个排序拼接,参看PointMamba的第四版!!
-            hidden_state = mixlayer(hidden_state)                                    #  
-            hidden_state = rearrange(hidden_state, "b (o g) d -> o (b g) d", o=o_s)  # 拆分各排序
+            hidden_state = rearrange(hidden_state, "o (b g) d -> b (o g) d", b=b_s)  # 将各个排序拼接,参看PointMamba的第四版!!      
+            hidden_state = mixlayer(hidden_state)
             #将同一点，在各排序情况下的特征拼接到一起！
+            # 将阶段性结果输出！                                    #  
+            hidden_state = rearrange(hidden_state, "b (o g) d -> o (b g) d", o=o_s).contiguous()  # 拆分各排序
             hidden_state = torch_scatter.scatter(hidden_state,index=s_inverse, dim=1)# 逆排序 => order_size batch_size*num_group d
             hidden_state = rearrange(hidden_state, "o (b g) d -> b g (o d)", b= b_s) # 调整，将同一点，在各排序情况下的特征拼接到一起！
-            hidden_state = self.fuse_o(hidden_state)
+            hidden_state = self.fuse_o(hidden_state)         # FIXME:注意,hidden_state没有融合,这样似乎好点！！
             hidden_state = rearrange(hidden_state, "b g d -> (b g) d")               # (b g) d 
-            hidden_states.append(hidden_state)                                       # [(b g) d, ]           
+            hidden_states.append(hidden_state)                                       # [(b g) d, ]         
         s_pc.feat = hidden_states                                  # b (l g) d  TODO: 感觉PointCloud.feat这个域被重用了太多！   
         return s_pc
     
@@ -172,7 +171,7 @@ class PointSIS_Encoder(nn.Module):
         
                                     
     def forward(self, s_pc:PointCloud):
-        s_feat  = s_pc.feat[::-1]            # [b g d, ...] 列表长l # TODO:为什么逆序,思考!
+        s_feat  = s_pc.feat[::-1]            # [(b g) d, ...] 列表长l # TODO:为什么逆序,思考!
         s_order = s_pc.serialized_order      # o (b g)
         s_inverse = s_pc.serialized_inverse  # o (b g)
 

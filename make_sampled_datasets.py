@@ -32,6 +32,7 @@ def get_labeled_data(source_dir:Path, stem:str):   # 假设做了前期处理！
     mesh.remove_duplicated_triangles()   # 去重是必须的！！
     mesh.compute_vertex_normals()
     return mesh, label
+
 """
 
 """
@@ -67,6 +68,7 @@ def collect_group_with_aligned_and_sampled_data(source_dir:Path, stems:list[str]
     for stem in stems:
         print(stem)
         mesh, label_ = get_labeled_data(source_dir, stem)
+
         # 对齐            
         mesh, _ = align_the_mesh(mesh)
         vertices, _ , normals, label = get_data(mesh, label_)
@@ -112,21 +114,19 @@ def make_parquet_with_aligned_sampled_data(source_dir:Path, out_dir="data", grou
         out_name = f"{out_dir}/{clx}-oralscan-part-{i:04}-of-{file_numbers:04}.parquet"
         d.to_parquet(out_name)
 
-def make_test_dataset_with_aligned_sampled_data():
-    source_dir= Path("/home/archie/Projects/data/口扫模型/牙齿分割标注数据---/牙齿分割10个-ns")
+def make_test_dataset_with_aligned_sampled_data(source_dir= Path("/home/archie/Projects/data/口扫模型/牙齿分割标注数据---/牙齿分割10个-ns"),clx_a=""):
     out_dir="zby/oral_scan/data"
     group_size = 4
-    make_parquet_with_aligned_sampled_data(source_dir=source_dir,out_dir=out_dir,group_size=group_size,clx="test")
+    make_parquet_with_aligned_sampled_data(source_dir=source_dir,out_dir=out_dir,group_size=group_size,clx="test"+clx_a)
 
-def make_train_dataset_with_aligned_sampled_data():
-    source_dir= Path("/home/archie/Projects/data/口扫模型/牙齿分割标注数据---/标注数据")
+def make_train_dataset_with_aligned_sampled_data(source_dir= Path("/home/archie/Projects/data/口扫模型/牙齿分割标注数据---/标注数据"),clx_a=""):
     out_dir="zby/oral_scan/data"
     group_size = 400
-    make_parquet_with_aligned_sampled_data(source_dir=source_dir,out_dir=out_dir,group_size=group_size, clx="train")
+    make_parquet_with_aligned_sampled_data(source_dir=source_dir,out_dir=out_dir,group_size=group_size, clx="train"+clx_a)
 
-make_train_dataset_with_aligned_sampled_data()
-make_test_dataset_with_aligned_sampled_data()
-
+# make_train_dataset_with_aligned_sampled_data()
+# make_test_dataset_with_aligned_sampled_data()
+make_train_dataset_with_aligned_sampled_data(source_dir=Path("/home/archie/Projects/data/口扫模型/口扫模型分割新增（有乳牙）"), clx_a="_a")
 
 
 

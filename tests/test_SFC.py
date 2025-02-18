@@ -180,19 +180,20 @@ def test_grouping_by_fps():
     
 def test_fps_pointnet2():
     from pointnet2_ops.pointnet2_utils import furthest_point_sample as fps
-    pc = torch.randn(4, 1000000, 3, device=device)
+    pc = torch.randn(4, 16384, 3, device=device)
     print(pc.shape)
     start_time = time.time()
-    fpc = fps(pc, 10000)
-    a = fpc[0,118]
+    fpc = fps(pc, 8192)
+    a = fpc[0,18]
     print(a)
     time_it(start_time)
 
 def test_pointmlp():
     from pm.pointmlp import pointMLP
+    from torchinfo import summary
     import torch.autograd.profiler as profiler
 
-    B,C,N,Cls = 4,3,16384,16
+    B,C,N,Cls = 4,3,2**15,16
     data = torch.rand(B,C,N).to(device)
     norm = torch.rand(B,C,N).to(device)
     cls_label = torch.rand([B, Cls]).to(device)
@@ -200,6 +201,11 @@ def test_pointmlp():
     model = pointMLP(50).to(device)
     out = model(data, norm, cls_label)  # [2,2048,50]
     print(out.shape)
+    for i in range(10):
+        with torch.no_grad():
+            start_time = time.time()
+            out = model(data, norm, cls_label)
+            time_it(start_time)
 
     # with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
     #     with profiler.record_function("model_forward"):
@@ -215,22 +221,28 @@ def test_pointmlp():
 def test_curvenet():
     from pm.curvenet import CurveNet
     import torch.autograd.profiler as profiler
-    data = torch.rand(2, 3, 2048).cuda()
+    data = torch.rand(2, 3, 2**11).cuda()
     cls_label = torch.rand([2, 16]).cuda()
     print("===> testing modelD ...")
     model = CurveNet().cuda()
     out = model(data,l=cls_label)  # [2,2048,50]
     print(out.shape)
+    for i in range(10):
+        with torch.no_grad():
+            start_time = time.time()
+            out = model(data, l=cls_label)
+            print(out.shape)
+            time_it(start_time)
 
-    with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
-        with profiler.record_function("model_forward"):
-            output = model(data, l=cls_label)
-            loss = output.sum()
-        with profiler.record_function("model_backward"):
-            loss.backward()
+    # with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
+    #     with profiler.record_function("model_forward"):
+    #         output = model(data, l=cls_label)
+    #         loss = output.sum()
+    #     with profiler.record_function("model_backward"):
+    #         loss.backward()
 
-    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
-    print(f"Peak CUDA Memory Usage: {prof.total_average().cuda_memory_usage / (1024 ** 2)} MB")
+    # print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+    # print(f"Peak CUDA Memory Usage: {prof.total_average().cuda_memory_usage / (1024 ** 2)} MB")
 
 def test_point_transformer():
     import torch.autograd.profiler as profiler
@@ -437,7 +449,7 @@ def test_mask_predictor():
 # test_point_transformer()
 # test_point_sis()
 # test_patch()
-test_serializedpooling()
+# test_serializedpooling()
 # test_remote_pointsis()
 # test_mask_predictor()
 input()

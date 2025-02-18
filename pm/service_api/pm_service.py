@@ -101,16 +101,22 @@ def read_result(pc:PointCloud, threshold:float):
 
         pred_probs = pc.pred_probs[i]                          #  b q l, fetch i -> q l
         pred_cls = torch.argmax(l_m(pred_probs),dim=-1)  # 每个 query预测了那个类！ -> q
-        pred_cls_s = pred_cls.to_sparse()
+        pred_cls_s = pred_cls.to_sparse()                # 将预测为0类的去掉了！ FIXME:这是个好办法吗？
         indices = to_numpy(pred_cls_s.indices()[0])                 # TODO:注意这个零！
         values  = to_numpy(pred_cls_s.values())
 
         seg_result = {}
         for j in range(len(indices)):
-            if values[j] < 33 :
+            if values[j] < 33:
                 t_num = TEETH.TEETH_cls_num[values[j]]
                 (one_teeth_seg,)= np.where(feat[:, indices[j]] > threshold)
                 seg_result[f'{t_num}'] = one_teeth_seg.tolist()
+
+            # if values[j] < 2 :
+            #     t_num = values[j]
+            #     (one_teeth_seg,)= np.where(feat[:, indices[j]] > threshold)
+            #     seg_result[f'{t_num}+{j}'] = one_teeth_seg.tolist()
+
             # if values[j] in {33, 34, 35, 36}: # TODO: 牙龈， 合并的牙齿！
             #     (one_teeth_seg,)= np.where(feat[:, indices[j]] > threshold)
             #     seg_result[f'{values[j]+200}'] = one_teeth_seg.tolist()                

@@ -43,7 +43,9 @@ def collect_group(source_dir:Path, stems:list[str]):
             for keypoint_name in list(key_point_labels[tooth_id].keys()):
                 keypoints += key_point_labels[tooth_id][keypoint_name]
             keypoints = np.asarray(keypoints)
-            keypoints = np.unique(keypoints)
+            keypoints, idx = np.unique(keypoints, return_index=True)
+            keypoints = keypoints[np.argsort(idx)]        # 对出现按出现的次序排放
+            print(keypoints)
             print(f"{tooth_id}: {keypoints.shape}")
 
     return {"vertices":vertices_c, "triangles":triangles_c,"label":label_c,"name":name_c}
@@ -90,7 +92,7 @@ def enumerate_example(ex):
     pointSet.paint_uniform_color([1,0.75,0])
 
     s_mesh = mesh.select_by_index(t_i)
-    o3d.visualization.draw_geometries([ pointSet, s_mesh])
+    o3d.visualization.draw_geometries([pointSet, s_mesh])
 
 
 def noop_ok():

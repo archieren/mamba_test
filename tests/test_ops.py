@@ -44,14 +44,17 @@ def test_ball_query():
     offset = torch.tensor([4999,5001], device=device).cumsum(0)
     new_offset = torch.tensor([100,101],device=device).cumsum(0)
     idx = fps(x, offset, new_offset)
+    print(idx.shape)
     centers= x[idx]
-    idx_b, dist = bq(7, 0.04, 0.000001, x, offset, centers, new_offset)  # 感觉返回的dist似乎有问题! 最好别用!
+    idx_b, dist = bq(7, 1.0, 0.000001, x, offset, centers, new_offset)  # 感觉返回的dist似乎有问题! 最好别用! 底层代码ball_query_cuda_kernel.cu 120行有bug!!
+    print(idx_b.shape)
     print(idx_b[0,:])
-    print(dist[0,:])
+    print(x[idx_b[0,:]])
+    print("Distance:",dist.shape, "--", dist[0,:])
     print(centers[0])
     print(x[idx_b[0,0]])
     print(square_distance(centers[0].view(1,1,3),x[idx_b[0,0]].view(1,1,3)))
-    print(square_distance(centers[0].view(1,1,3),x[idx_b[0,0:7]].view(1,7,3)))
+    print(torch.sqrt(square_distance(centers[0].view(1,1,3),x[idx_b[0,0:7]].view(1,7,3))))
 
 def test_knn_query():
     print("test_knn_query")
@@ -91,7 +94,7 @@ def test_knn_query_2():
     # print(square_distance(centers[0].view(1,1,3),x[idx_b[0,0:7]].view(1,7,3)))
 
 
-# test_pointops()
-# test_ball_query()
-test_knn_query()
-test_knn_query_2()
+#test_pointops()
+test_ball_query()
+# test_knn_query()
+# test_knn_query_2()

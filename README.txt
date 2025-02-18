@@ -28,9 +28,9 @@ $pip install .
 
 5) 到pointcept里, 将pointops,pointops2导出来,本地安装
 $cd ...pointops2...
-$pip install .
-$cd ...pointops...
-$pip --no-build-isolation install . 
+$pip install . --no-build-isolation
+$cd ...pointops...  注意，有个bug, ball_query_cuda_kernel.cu 120行
+$pip  install . --no-build-isolation
 
 关于pyg的 PyTorch Geometric
 # 当然, torch和cuda的版本,自行调整!!!

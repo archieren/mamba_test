@@ -368,8 +368,6 @@ class CurveNet(nn.Module):
             emb = torch.cat((emb1, emb2, l), dim=1) # bs, 128 + 16, 1
         l = emb.expand(-1,-1, xyz.size(-1))
         x = torch.cat((l1_xyz, l1_points, l), dim=1)
-        print(l1_xyz.shape)
-        print(x.shape)
         xyz, x = self.up_cic2(l1_xyz, x)
         xyz, x = self.up_cic1(xyz, x)
 

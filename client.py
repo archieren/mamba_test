@@ -15,12 +15,12 @@ def time_it(start_time):
 simple_test_case=[
                 '20150474_shell_occlusion_u',
                 '20150474_shell_occlusion_l',
-                '20182059_shell_occlusion_u',
-                '20182059_shell_occlusion_l',
-                '20181735_shell_occlusion_u',
-                '20181735_shell_occlusion_l',
-                '20180612_shell_occlusion_u',
-                '20180612_shell_occlusion_l',
+                # '20182059_shell_occlusion_u',
+                # '20182059_shell_occlusion_l',
+                # '20181735_shell_occlusion_u',
+                # '20181735_shell_occlusion_l',
+                # '20180612_shell_occlusion_u',
+                # '20180612_shell_occlusion_l',
                 # '1_d',
                 # '1_u',
                 # '2_d',
@@ -67,7 +67,7 @@ for case in simple_test_case:
     file_path = Path(root) / "Separate" / "TestData" / f"{case}.stl"
     print(len(open(file_path, 'rb').read()))
     f_s = file_bytes_to_str(open(file_path, 'rb').read())
-    req_raw = SegRequest(stl=f_s, s_o_i=case, threshhold=0.5)
+    req_raw = SegRequest(stl=f_s, s_o_i=case, threshhold=0.6)
     response = requests.post(http_url, json=req_raw.model_dump())
     stl = response.json()
     file_path = Path(root) / "Separate" / "TestData" / f"{case}.json"

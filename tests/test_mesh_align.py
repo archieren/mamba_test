@@ -9,7 +9,9 @@ from pm.utils.align_the_mesh import align_the_mesh
 #source_dir= Path("/home/archie/Projects/data/口扫模型/牙齿分割标注数据---/乳牙")
 #source_dir= Path("/home/archie/Projects/data/TestSet/ATA-TestSample/Separate/TestData")
 #source_dir= Path("/home/archie/Projects/data/口扫模型/牙齿分割标注数据---/标注数据")
-source_dir= Path("/home/archie/Projects/data/TestSet/ATA-TestSample/Separate/temp3")
+#source_dir= Path("/home/archie/Projects/data/TestSet/ATA-TestSample/Separate/temp2")
+#source_dir = Path("/home/archie/Projects/data/口扫模型/口扫模型分割新增（有乳牙）")
+source_dir = Path("/home/archie/Projects/data/口扫模型/HowTo")
 stems=[ stl_item.stem for stl_item in source_dir.glob("*.stl")]
 # stem = "lower0059"
 

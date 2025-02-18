@@ -7,47 +7,54 @@ from typing import Union,List, ClassVar
 TEETH_num = {18,17,16,15,14,13,12,11,
              28,27,26,25,24,23,22,21,
              38,37,36,35,34,33,32,31,
-             48,47,46,45,44,43,42,41}
+             48,47,46,45,44,43,42,41,}
 
 # FIXME:牙齿的实例和类究竟是是个什么关系呢？
 # 一个牙齿一类!
-# @dataclass
-# class TEETH:
-#     # 牙编号到类号
-#     TEETH_num_cls :ClassVar[dict[int,int]]  = { 18: 8, 17: 7, 16: 6, 15: 5, 14: 4, 13: 3, 12: 2, 11: 1,
-#                                                 28:16, 27:15, 26:14, 25:13, 24:12, 23:11, 22:10, 21: 9,
-#                                                 38:24, 37:23, 36:22, 35:21, 34:20, 33:19, 32:18, 31:17,
-#                                                 48:32, 47:31, 46:30, 45:29, 44:28, 43:27, 42:26, 41:25}
-#                                 # 类号到牙编号
-#     TEETH_cls_num  :ClassVar[dict[int,int]] = {  8:18,  7:17,  6:16,  5:15,  4:14,  3:13,  2:12,  1:11,
-#                                                 16:28, 15:27, 14:26, 13:25, 12:24, 11:23, 10:22,  9:21,
-#                                                 24:38, 23:37, 22:36, 21:35, 20:34, 19:33, 18:32, 17:31,
-#                                                 32:48, 31:47, 30:46, 29:45, 28:44, 27:43, 26:42, 25:41}
-
-#     superior_gingival :ClassVar[int] = 33
-#     inferior_gingival :ClassVar[int] = 34
-
-#     superior_dentition :ClassVar[int] = 35
-#     inferior_dentition :ClassVar[int] = 36
-
-#     all_classes :ClassVar[int]  = 36
-
-# 所有牙齿都归为一类
 @dataclass
 class TEETH:
     # 牙编号到类号
-    TEETH_num_cls :ClassVar[dict[int,int]]  = { 18: 1, 17: 1, 16: 1, 15: 1, 14: 1, 13: 1, 12: 1, 11: 1,
-                                                28: 1, 27: 1, 26: 1, 25: 1, 24: 1, 23: 1, 22: 1, 21: 1,
-                                                38: 1, 37: 2, 36: 2, 35: 2, 34: 2, 33: 2, 32: 2, 31: 2,
-                                                48: 1, 47: 2, 46: 2, 45: 2, 44: 2, 43: 2, 42: 2, 41: 2}
+    TEETH_num_cls :ClassVar[dict[int,int]]  = { 18: 8, 17: 7, 16: 6, 15: 5, 14: 4, 13: 3, 12: 2, 11: 1,
+                                                28:16, 27:15, 26:14, 25:13, 24:12, 23:11, 22:10, 21: 9,
+                                                38:24, 37:23, 36:22, 35:21, 34:20, 33:19, 32:18, 31:17,
+                                                48:32, 47:31, 46:30, 45:29, 44:28, 43:27, 42:26, 41:25}
+                                # 类号到牙编号
+    TEETH_cls_num  :ClassVar[dict[int,int]] = {  8:18,  7:17,  6:16,  5:15,  4:14,  3:13,  2:12,  1:11,
+                                                16:28, 15:27, 14:26, 13:25, 12:24, 11:23, 10:22,  9:21,
+                                                24:38, 23:37, 22:36, 21:35, 20:34, 19:33, 18:32, 17:31,
+                                                32:48, 31:47, 30:46, 29:45, 28:44, 27:43, 26:42, 25:41}
 
-    superior_gingival :ClassVar[int] = 3
-    inferior_gingival :ClassVar[int] = 4
+    superior_gingival :ClassVar[int] = 33
+    inferior_gingival :ClassVar[int] = 34
 
-    superior_dentition :ClassVar[int] = 5
-    inferior_dentition :ClassVar[int] = 6
+    superior_dentition :ClassVar[int] = 35
+    inferior_dentition :ClassVar[int] = 36
 
-    all_classes :ClassVar[int]  = 6
+    all_classes :ClassVar[int]  = 36
+
+# 所有牙齿都归为一类
+# @dataclass
+# class TEETH:
+#     # 牙编号到类号
+#     TEETH_num_cls :ClassVar[dict[int,int]] ={ 
+#                                             18: 1, 17: 1, 16: 1, 15: 1, 14: 1, 13: 1, 12: 1, 11: 1,
+#                                             28: 1, 27: 1, 26: 1, 25: 1, 24: 1, 23: 1, 22: 1, 21: 1,
+#                                             38: 1, 37: 1, 36: 1, 35: 1, 34: 1, 33: 1, 32: 1, 31: 1,
+#                                             48: 1, 47: 1, 46: 1, 45: 1, 44: 1, 43: 1, 42: 1, 41: 1,
+#                                             #替牙期的编号,反过来写以示特殊
+#                                             51: 1, 52: 1, 53: 1, 54: 1, 55: 1, 56: 1, 57: 1, 58: 1,
+#                                             61: 1, 62: 1, 63: 1, 64: 1, 65: 1, 66: 1, 67: 1, 68: 1,
+#                                             71: 1, 72: 1, 73: 1, 74: 1, 75: 1, 76: 1, 77: 1, 78: 1,
+#                                             81: 1, 82: 1, 83: 1, 84: 1, 85: 1, 86: 1, 87: 1, 88: 1
+#                                             }
+
+#     superior_gingival :ClassVar[int] = 2
+#     inferior_gingival :ClassVar[int] = 2
+
+#     superior_dentition :ClassVar[int] = 3
+#     inferior_dentition :ClassVar[int] = 3
+
+#     all_classes :ClassVar[int]  = 6
 
 kp_name_cls =   {'buccal':1,                # 颊(侧)点                               #6    #7       各2个
                 'buccal-cusp':2,            # 颊(侧)尖点                 #4    #5                   各1个
@@ -82,7 +89,7 @@ def tooth_lables(labels:torch.Tensor, shape_weight:torch.Tensor) -> List[torch.T
     for b in range(b_s):
         class_labels = []
         masks = []
-        up_or_low = "unknown"
+        up_or_low = "unknown"                         #FIXME: 还有用吗？
         s_w = shape_weight[b].unsqueeze(0)
         for i in TEETH_num:            
             x = torch.where(labels[b]==i,1,0)
@@ -93,7 +100,7 @@ def tooth_lables(labels:torch.Tensor, shape_weight:torch.Tensor) -> List[torch.T
                 #
                 cls = TEETH.TEETH_num_cls[i]                 # 牙编号 -> Class!
                 class_labels.append(cls)
-                up_or_low="up" if i//10 < 3 else "low"  # 有点浪费, TODO:how?
+                up_or_low="up" if i//10 in {1, 2, 5, 6} else "low"  # TODO:how? # FIXME:这里曾经出现过翻车性的Bug!  % -> //等等!!
         #       
         non_tooth_mask = torch.where(labels[b]>0, 0, 1).unsqueeze(0)             # 牙龈
         if non_tooth_mask.sum()>0:
@@ -154,7 +161,7 @@ class PointSISConfig():
         order              = ["hilbert", "hilbert-trans"] # ["z", "z-trans", "hilbert", "hilbert-trans"]# 
         shuffle_orders:bool=False
         mamba_config = asdict(Mamba1Config())
-        d_model:      int = 128       # feature_dim pos_dim d_model 是一样的!, 未将d_model放到mamba_config里！
+        d_model:      int = 256       # feature_dim pos_dim d_model 是一样的!, 未将d_model放到mamba_config里！
         feature_dims: int = d_model
         pos_dims:     int = d_model
         
