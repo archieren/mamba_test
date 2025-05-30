@@ -8,8 +8,8 @@ from addict import Dict
 from torch import Tensor
 from einops import rearrange,repeat
 from pm.utils.misc import offset2batch,batch2offset
-from mamba_ssm.modules.mamba_simple import Mamba
-
+#from mamba_ssm.modules.mamba_simple import Mamba
+from mamba_ssm.modules.mamba2 import Mamba2 as Mamba
 # 直接使用mamba推荐的Block, 不像Point Mamba抄过来! 
 # 这需要看片文章"On Layer Normalization in the Transformer Architecture"
 from mamba_ssm.modules.block import Block 

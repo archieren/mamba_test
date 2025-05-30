@@ -132,7 +132,7 @@ def tooth_lables(labels:torch.Tensor, shape_weight:torch.Tensor) -> List[torch.T
 class Mamba1Config:     # 抄自 Mamba1的初始化参数!!!
 
     # d_model: int        # D in paper/comments
-    d_state: int = 32   # N in paper/comments
+    d_state: int = 64   # N in paper/comments
     d_conv:  int = 4
     expand:  int = 2     # E in paper/comments
 
@@ -158,7 +158,7 @@ class PointSISConfig():
         # About SFC
         #Spatial Filling Curve!
         #{"z", "z-trans", "hilbert", "hilbert-trans"}
-        order              = ["hilbert", "hilbert-trans"] # ["z", "z-trans", "hilbert", "hilbert-trans"]# 
+        order              = ["hilbert"] # , "hilbert-trans"] # ["z", "z-trans", "hilbert", "hilbert-trans"]# 
         shuffle_orders:bool=False
         mamba_config = asdict(Mamba1Config())
         d_model:      int = 256       # feature_dim pos_dim d_model 是一样的!, 未将d_model放到mamba_config里！

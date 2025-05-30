@@ -69,7 +69,7 @@ def collect_group_with_aligned_and_sampled_data(source_dir:Path, stems:list[str]
         print(stem)
         mesh, label_ = get_labeled_data(source_dir, stem)
 
-        # 对齐            
+        # 对齐？姿态和尺度？            
         mesh, _ = align_the_mesh(mesh)
         vertices, _ , normals, label = get_data(mesh, label_)
 

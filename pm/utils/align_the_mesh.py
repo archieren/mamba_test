@@ -21,6 +21,15 @@ def is_soi(stem:str):   # TODO:口扫模型的名字,需要约定一下！
     if rg.search("(lower|_l|_d)",stem) != None:
         s_o_i = S_O_I.Inferior
     return s_o_i
+
+def scale_to_unit_sphere(points):   # 将处理的坐标归到单位球内！
+    #shifts = (points.max(axis=0) + points.min(axis=0)) / 2
+    shifts = points.mean(axis=0)
+    points = points - shifts
+    distances = np.linalg.norm(points, axis=1)
+    scale = 1 / np.max(distances)
+    points *= scale
+    return points
    
 def align_the_mesh(mesh:o3d.geometry.TriangleMesh): # 不要, s_o_i:S_O_I):
     """
@@ -70,9 +79,14 @@ def align_the_mesh(mesh:o3d.geometry.TriangleMesh): # 不要, s_o_i:S_O_I):
     #                     [np.sin(angle_radians), np.cos(angle_radians), 0],
     #                     [0, 0, 1]])
     #     trans_mat = np.dot(trans_mat, R_z)
-    mesh.vertices = o3d.utility.Vector3dVector(points)
-    mesh.rotate(trans_mat)
-    mesh.compute_vertex_normals()
-    return mesh, trans_mat
+
+    mesh_out = o3d.geometry.TriangleMesh()
+    mesh_out.vertices = o3d.utility.Vector3dVector(scale_to_unit_sphere(points))
+    #mesh_out.vertices = o3d.utility.Vector3dVector(points)
+    mesh_out.triangles = o3d.utility.Vector3iVector(mesh.triangles)
+    mesh_out.rotate(trans_mat)
+    mesh_out.compute_vertex_normals()
+    
+    return mesh_out, trans_mat
 
 

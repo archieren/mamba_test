@@ -94,8 +94,8 @@ def dataloader(split="train"):
 def load_model(c_f:Path, model:nn.Module):  # TODO:还要打磨一下,主要为了一些模块的参数复用！.先留下思路！
     pre_trained_dict = torch.load(c_f)
     model_dict = model.state_dict()
-    for key in model_dict.keys():
-        print(key)
+    # for key in model_dict.keys():
+    #     print(key)
     state_dict = {k:v for k,v in pre_trained_dict.items() if k in model_dict.keys()}
     model_dict.update(state_dict)
     model.load_state_dict(model_dict)
@@ -109,9 +109,8 @@ test_loader = dataloader(split="test")
 m_config = make_default_config()
 model = MODE_CLS(m_config)
 
-load_model(checkpoints_file, model)
+load_model(checkpoints_file, model.model)
 
-#model.load_state_dict(torch.load(checkpoints_file))
 print("Load a saved model")
 
 model= model.to(device)
