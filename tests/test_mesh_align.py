@@ -19,6 +19,13 @@ def get_labeled_data(source_dir:Path, stem:str):   # 假设做了前期处理！
     mesh.compute_vertex_normals()
     return mesh, label
 
+def fit_bounding_box(xyz):
+    # pcd = o3d.geometry.PointCloud()
+    # pcd.points = o3d.utility.Vector3dVector(xyz)
+    # return pcd.get_minimal_oriented_bounding_box()
+    b_box = o3d.geometry.OrientedBoundingBox.create_from_points_minimal(o3d.utility.Vector3dVector(xyz))
+    b_box.color = (1.0,0.0,1.0)
+    return b_box
 
 def fit_ellipsoid(points, method='best_fit'):
     from scipy.linalg import eigh
@@ -86,7 +93,7 @@ def create_a_fit_ellipsoid(points, method='best_fit'):
     mesh_elli.transform(T)
 
     # Customize appearance
-    mesh_elli.paint_uniform_color([0.1, 0.5, 0.9])  # RGB color (blue)
+    mesh_elli.paint_uniform_color([0.1, 0.9, 0.1])  # RGB color (blue)
     mesh_elli.compute_vertex_normals()               # Improve lighting
     
     return mesh_elli
@@ -110,8 +117,13 @@ def oral_scan_align(stem:str):
     for key, indexes_value in label['seg'].items():
         #print(key, indexes_value)
         points_part = points_[indexes_value]
+        
         part_elli = create_a_fit_ellipsoid(points_part, method='bounding')
         geos.append(part_elli)
+        
+        part_box = fit_bounding_box(points_part)
+        geos.append(part_box)
+        
     # points_31 = np.asarray(mesh.vertices)[label['seg']['31']]
     # mesh_elli_31 = create_a_fit_ellipsoid(points_31, method='bounding')
     # points_36 = np.asarray(mesh.vertices)[label['seg']['36']]
@@ -129,4 +141,5 @@ for stem in stems:
     if stem == "00252_l":
         print(stem)
         oral_scan_align(stem)
+        
 #

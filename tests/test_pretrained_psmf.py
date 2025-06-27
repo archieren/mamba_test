@@ -54,6 +54,7 @@ def collate_fn(batch, device):
     labels = []
     triangles = []
     for example in batch:
+        print(example.keys())
         oral_scan = o3d.geometry.TriangleMesh()
         oral_scan.vertices  = o3d.utility.Vector3dVector(example["vertices"])
         oral_scan.triangles = o3d.utility.Vector3iVector(example["triangles"])

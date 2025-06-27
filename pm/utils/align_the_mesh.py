@@ -44,7 +44,7 @@ def align_the_mesh(mesh:o3d.geometry.TriangleMesh): # 不要, s_o_i:S_O_I):
     #计算法相向量均值!
     normals = mesh.vertex_normals
     mean_nvec = np.mean(np.asarray(normals), axis=0)
-    mean_nvec = mean_nvec / np.linalg.norm(mean_nvec)
+    mean_nvec = mean_nvec / np.linalg.norm(mean_nvec)  #点的法向量的归一均值
     pca = PCA(n_components=3, svd_solver='randomized')
 
     pca.fit(points)

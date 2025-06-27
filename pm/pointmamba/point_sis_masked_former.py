@@ -19,13 +19,16 @@ from pm.pointmamba.pointmask import MaskDecoder
 from pm.utils.point_cloud import PointCloud, Grouper_By_NumGroup,FeatPropagation
 
 
-class Feature_Encoder(nn.Module):  # 位置也编码!! 先放到这，肯定要修改的！
+class Feature_Encoder(nn.Module):
+    """
+    特征编码，直接用MLP来处理！
+    """
     def __init__(self, encoder_channel):
         super().__init__()
         self.e_o = encoder_channel
-        self.e_i = 128
+        self.e_i = 128           #内部用的channel数！
         self.encoder = nn.Sequential(
-            nn.Linear(4, self.e_i *2),   # 如果换成SparseConv的化,就是所谓的xCPE！ See PVT3
+            nn.Linear(4, self.e_i *2),
             nn.GELU(),
             nn.Linear(self.e_i * 2, self.e_o)            
         )
@@ -41,8 +44,9 @@ class Pos_Encoder(nn.Module):  # 位置也编码!! 先放到这，肯定要修�
         super().__init__()
         self.e_o = encoder_channel
         self.e_i = 128
+        # 必须理解"如果换成SparseConv的化,就是所谓的xCPE！ See PVT3"
         self.encoder = nn.Sequential(
-            nn.Linear(3, self.e_i *2),   # 如果换成SparseConv的化,就是所谓的xCPE！ See PVT3
+            nn.Linear(3, self.e_i *2),   # 如果换成SparseConv的话,就是所谓的xCPE！ See PVT3
             nn.GELU(),
             nn.Linear(self.e_i * 2, self.e_o)            
         )

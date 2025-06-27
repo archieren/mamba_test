@@ -336,7 +336,8 @@ def test_patch():
         pointSet_c.paint_uniform_color([0.75,1, 0])
 
         upper_mesh = read_mesh(file_path="./assets/124_upper.stl")
-        o3d.visualization.draw_geometries([ pointSet_a, pointSet_b, pointSet_c, upper_mesh]) #
+        lower_mesh = read_mesh(file_path="./assets/124_lower.stl")
+        o3d.visualization.draw_geometries([ pointSet_a, pointSet_b, pointSet_c, upper_mesh, lower_mesh]) #
     
     draw(pc)
 
@@ -446,9 +447,9 @@ def test_mask_predictor():
 # test_pointmlp()
 # test_curvenet()
 
-# test_point_transformer()
-test_point_sis()
-# test_patch()
+#test_point_transformer()
+####test_point_sis()
+test_patch()
 # test_serializedpooling()
 # test_remote_pointsis()
 # test_mask_predictor()

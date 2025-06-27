@@ -25,7 +25,7 @@ def test_draw_curve():
     ax.set_zlabel('dim 3')
 
   fig = plt.figure(figsize=(16,4))
-  for ii, num_bits in enumerate([1,2,3,5]):
+  for ii, num_bits in enumerate([1]): # ,2,3,5
     ax = fig.add_subplot(1,4,ii+1, projection='3d')
     draw_curve(ax, num_bits)
   plt.show()
