@@ -41,7 +41,7 @@ class MambaConfig:     # 抄自 Mamba的初始化参数!!!
 
 @dataclass
 class ResVMamba3dConfig():
-    cube_size = 4 
+    cube_size = 8 
     in_chans =1
     mamba_config = asdict(MambaConfig()) 
     num_classes=6 
@@ -80,13 +80,13 @@ class Mlp(nn.Module):
         x = self.drop(x)
         return x
 
-class Permute(nn.Module):
-    def __init__(self, *args):
-        super().__init__()
-        self.args = args
+# class Permute(nn.Module):
+#     def __init__(self, *args):
+#         super().__init__()
+#         self.args = args
 
-    def forward(self, x: torch.Tensor):
-        return x.permute(*self.args)
+#     def forward(self, x: torch.Tensor):
+#         return x.permute(*self.args)
 
 class CrossScan3D(nn.Module):
     def __init__(self, *args, **kwargs):
@@ -265,17 +265,16 @@ class Stage(nn.Module):
         self.mixlayers = MixerLayers(c_out, depth, mamba_config)  # c_out as d_model
         self.cross_merge = CrossMerge3D()
         self.is_res = is_res
-        self.is_downsample = is_downsample
-        self.down_sampler = CubeDownSample(c_in=c_in, c_out=c_out)
+        self.is_downsample = is_downsample     #
+        self.down_sampler = CubeDownSample(c_in=c_in, c_out=c_out)   if is_downsample else nn.Identity()
                             # make_dowsample(c_in=c_in, c_out=c_out) if is_downsample else nn.Identity()
     
     def forward(self, x:torch.Tensor):
         #print("x--",x.shape)
-        # if self.is_downsample :
-        #     res = self.down_sampler(x)    # 下采样！
-        # else :
-        #     res = x
-        res = self.down_sampler(x)
+        if self.is_downsample :
+            res = self.down_sampler(x)    # 下采样！
+        else :
+            res = x
         #print("y--",y.shape)
         B,C,I,J,K = res.shape       
         #
@@ -327,8 +326,8 @@ class ResVMamba3D(nn.Module):
             depth = self.depths[i_stage]
             mamba_config = config.mamba_config
             is_res = True if i_stage < self.num_stages - 1 else False   # 最后一个Stage 没有搞残差！
-            is_downsample = True if i_stage > 0 else False                  # 第一个Stage 没有搞下采样！ 先前的embedding相当与干了！
-            self.stages.append(Stage(c_in, c_out, depth, mamba_config, is_res=is_res, is_downsample=is_downsample))
+            # is_downsample = True if i_stage > 0 else False              # 第一个Stage 没有搞下采样！ 先前的embedding相当与干了！
+            self.stages.append(Stage(c_in, c_out, depth, mamba_config, is_res=is_res, is_downsample=True))
         
         num_features = config.dims[-1]
         num_classes = config.num_classes
