@@ -4,7 +4,7 @@ sys.path.append(os.getcwd()) # 先这样!!!
 import torch
 import torch.nn as nn
 
-from resvmamba.resvmamba3d import ResVMamba3D, make_default_config
+from resvmamba.resvmamba3d import ResVMamba3dClassifierModel, make_default_config
 
 def time_it(start_time):
     stop_time = time.time()
@@ -13,9 +13,9 @@ def time_it(start_time):
 
 config = make_default_config()
 
-model = ResVMamba3D(config).cuda().eval()
+model = ResVMamba3dClassifierModel(config).cuda().eval()
 
-data = torch.randn((1, 1, 128, 128, 128)).cuda()
+data = torch.randn((4, 1, 128, 128, 128)).cuda()
 
 for i in range(10):
     print(f"Run{i}")
@@ -27,4 +27,3 @@ for i in range(10):
   
 
 input()
-
