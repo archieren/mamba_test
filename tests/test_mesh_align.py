@@ -112,7 +112,7 @@ def oral_scan_align(stem:str):
     points_out = np.asarray(mesh.vertices)
     #mesh_elli = create_a_fit_ellipsoid(points_out, method='bounding')
 
-    geos = [ mesh, frame_new]
+    geos = [frame_new] # mesh,
     points_ = np.asarray(mesh.vertices)
     for key, indexes_value in label['seg'].items():
         #print(key, indexes_value)

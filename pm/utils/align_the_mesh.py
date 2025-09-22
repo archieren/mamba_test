@@ -81,8 +81,8 @@ def align_the_mesh(mesh:o3d.geometry.TriangleMesh): # 不要, s_o_i:S_O_I):
     #     trans_mat = np.dot(trans_mat, R_z)
 
     mesh_out = o3d.geometry.TriangleMesh()
-    mesh_out.vertices = o3d.utility.Vector3dVector(scale_to_unit_sphere(points))
-    #mesh_out.vertices = o3d.utility.Vector3dVector(points)
+    #mesh_out.vertices = o3d.utility.Vector3dVector(scale_to_unit_sphere(points)) #
+    mesh_out.vertices = o3d.utility.Vector3dVector(points)
     mesh_out.triangles = o3d.utility.Vector3iVector(mesh.triangles)
     mesh_out.rotate(trans_mat)
     mesh_out.compute_vertex_normals()

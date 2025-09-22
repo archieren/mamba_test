@@ -46,7 +46,7 @@ class PointCloud(Dict):
         elif "offset" not in self.keys() and "batch" in self.keys():
             self.offset = batch2offset(self.batch)
         # 
-
+                
     def serialization(self, order={"hilbert", "hilbert-trans"}, depth=None, shuffle_orders=False):
         """
         Point Cloud Serialization
@@ -198,27 +198,27 @@ class PointCloud(Dict):
         self["sparse_shape"] = sparse_shape
         self["sparse_conv_feat"] = sparse_conv_feat
 
-@torch.no_grad()
-@deprecated("# 这个真不能用！, torch_geometric的实现，真是慢。用pointops里的那个，比他快十倍以上！！！")
-def group_by_ratio_(xyz_pc:PointCloud, group_size:int, ratio=0.1):  
-    '''
-        input: 
-        xyz_pc.coord  shape 为 (N1+N2+.....+Nb) x 3.
-        xyx_pc.batch  应当形如[N1s 0, N2s 1,..., Nbs (b-1)]
-        xyz_pc.batch_bin 应为[N1, N2,..., Nb]
-        ---------------------------
-    '''
-    # from torch_geometric.nn import fps as fps_t
-    # from torch_geometric.nn import knn as  knn_t
-    from torch_cluster import fps as fps_t
-    from torch_cluster import knn as knn_t
-    s_idx = fps_t(xyz_pc.coord, xyz_pc.batch, ratio=ratio)  # 样本点的index. 采样,样本点当作中心.
-    s_xyz  = xyz_pc.coord[s_idx]                # 样本点的坐标
-    samples_batch = xyz_pc.batch[s_idx]           # 样本点的批号
-    patch_idx = knn_t(xyz_pc.coord, s_xyz, group_size,xyz_pc.batch, samples_batch)  # 很奇怪的一个返回结果!
-    patch_idx = patch_idx[1].reshape((-1,group_size))
+# @torch.no_grad()
+# @deprecated("# 这个真不能用！, torch_geometric的实现，真是慢。用pointops里的那个，比他快十倍以上！！！")
+# def group_by_ratio_(xyz_pc:PointCloud, group_size:int, ratio=0.1):  
+#     '''
+#         input: 
+#         xyz_pc.coord  shape 为 (N1+N2+.....+Nb) x 3.
+#         xyx_pc.batch  应当形如[N1s 0, N2s 1,..., Nbs (b-1)]
+#         xyz_pc.batch_bin 应为[N1, N2,..., Nb]
+#         ---------------------------
+#     '''
+#     # from torch_geometric.nn import fps as fps_t
+#     # from torch_geometric.nn import knn as  knn_t
+#     from torch_cluster import fps as fps_t
+#     from torch_cluster import knn as knn_t
+#     s_idx = fps_t(xyz_pc.coord, xyz_pc.batch, ratio=ratio)  # 样本点的index. 采样,样本点当作中心.
+#     s_xyz  = xyz_pc.coord[s_idx]                # 样本点的坐标
+#     samples_batch = xyz_pc.batch[s_idx]           # 样本点的批号
+#     patch_idx = knn_t(xyz_pc.coord, s_xyz, group_size,xyz_pc.batch, samples_batch)  # 很奇怪的一个返回结果!
+#     patch_idx = patch_idx[1].reshape((-1,group_size))
 
-    return patch_idx, s_idx
+#     return patch_idx, s_idx
 
 
 # @torch.no_grad()
@@ -313,7 +313,8 @@ def point_curvature(a:torch.Tensor, b:torch.Tensor, dim=-1):
 def __samples(parent_pc:PointCloud, s_idx:torch.Tensor, s_offset:torch.Tensor, group_size:int) -> torch.Tensor:
     radians_of_five_degrees = 0.087266                                               # 5度的弧度。
     s_xyz  = parent_pc.coord[s_idx]                                                  # (b g) 3   or n_1+n_2+...+n_b 3
-    N = group_size                                                           
+    N = group_size
+    #取得相邻n个点的坐标！                                                           
     s_n_idx, _dist = knn(N, parent_pc.coord, parent_pc.offset, s_xyz,s_offset)       # (b g) N,_ or n_1+n_2+...+n_b N, _
 
     s_n = parent_pc.coord[s_n_idx]                                                   # (b g) N 3 or n_1+n_2+...+n_b N 3 # 没特定feat时,用他

@@ -277,7 +277,8 @@ def train(epoches = 200,T_max:int=36,batch_size = 4,learning_rate = 0.0001): # m
 
     #Loss and optimizer
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=T_max)
+    #scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=T_max)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[1080,], gamma=0.2)
     def train_ep(epoch:int,
                  data_loader:DataLoader,
                  model:nn.Module = model,
@@ -434,7 +435,7 @@ def test_knn():
 
 # make_parque(cls='train')
 # make_parque(cls='test')
-train(epoches=1080, T_max=18, batch_size=6, learning_rate=0.001 )   # 
+train(epoches=1080, T_max=18, batch_size=6, learning_rate=0.01 )   # 
 # test_cosine_similarity()
 #test_knn()
 

@@ -154,7 +154,7 @@ class Mamba1Config:     # 抄自 Mamba1的初始化参数!!!
 @dataclass
 class PointSISConfig():
         d_cat:        int=1      # 数据的范畴
-        in_channels:  int = 3
+        in_channels:  int = 8    # 3
         # About SFC
         #Spatial Filling Curve!
         #{"z", "z-trans", "hilbert", "hilbert-trans"}

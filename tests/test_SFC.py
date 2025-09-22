@@ -11,7 +11,7 @@ from addict import Dict
 from pathlib import Path
 from pm.utils.misc import offset2batch,batch2offset
 from pm.sfc_serialization import encode
-from pm.utils.point_cloud import PointCloud,group_by_group_number,group_by_ratio,group_by_ratio_
+from pm.utils.point_cloud import PointCloud,group_by_group_number # ,group_by_ratio,group_by_ratio_
 
 
 
@@ -88,7 +88,7 @@ def make_data_dict_(upper_stl_path):
 
 def make_test_data_dict():
     # dtype=torch.float是必要的!!!
-    BN= [1024, 2048]
+    BN= [32768, 2048]
     points_lower = torch.randn(BN[0], 3, device=device, dtype=torch.float) 
     normals_lower = torch.randn(BN[0], 3, device=device, dtype=torch.float) 
 
@@ -142,20 +142,15 @@ def test_PointCloud():
     print("About sparse_conv_feat: batch size")
     print(pc.sparse_conv_feat.batch_size)
 
-def test_grouping_by_ratio():
-    from ctypes.util import find_library
-    pc = make_PointCloud()
-    pc.serialization()
-    # for i in range(3):
-    #     print(f"Grouping_by_ratio_with_torch_cluster:{i}")
-    #     start_time = time.time()
-    #     s_pc = group_by_ratio_(pc,7, ratio=0.08) # (1024*)
-    #     time_it(start_time)
-    for i in range(3):
-        print(f"Grouping_by_ratio_with_pointops:{i}")
-        start_time = time.time()
-        s_pc = group_by_ratio(pc,7, ratio=0.08) # (1024*)
-        time_it(start_time)
+# def test_grouping_by_ratio():
+#     from ctypes.util import find_library
+#     pc = make_PointCloud()
+#     pc.serialization()
+#     for i in range(3):
+#         print(f"Grouping_by_ratio_with_pointops:{i}")
+#         start_time = time.time()
+#         s_pc = group_by_ratio(pc,7, ratio=0.08) # (1024*)
+#         time_it(start_time)
 
 
 def test_grouping_by_fps():
@@ -193,7 +188,7 @@ def test_pointmlp():
     from torchinfo import summary
     import torch.autograd.profiler as profiler
 
-    B,C,N,Cls = 4,3,2**15,16
+    B,C,N,Cls = 4,3,2**11,16
     data = torch.rand(B,C,N).to(device)
     norm = torch.rand(B,C,N).to(device)
     cls_label = torch.rand([B, Cls]).to(device)
@@ -257,10 +252,18 @@ def test_point_transformer():
     print(get_cudadevrt_path())
     print(_get_cuda_include_lib())    
     from pm.point_transformer import PointTransformerV3
-    model =PointTransformerV3(3).to(device)
+    model =PointTransformerV3(3,enable_flash=True,
+                            upcast_attention=False,
+                            upcast_softmax=False).to(device)
     dc = make_test_data_dict()
     pc = model(dc)
-    print(pc.keys())
+    #print(pc.keys())
+    for i in range(10):
+        with torch.no_grad():
+            start_time = time.time()
+            out = model(dc)
+            #print(out.shape)
+            time_it(start_time)
 
     # with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
     #     with profiler.record_function("model_forward"):
@@ -447,9 +450,9 @@ def test_mask_predictor():
 # test_pointmlp()
 # test_curvenet()
 
-#test_point_transformer()
+test_point_transformer()
 ####test_point_sis()
-test_patch()
+# test_patch()
 # test_serializedpooling()
 # test_remote_pointsis()
 # test_mask_predictor()

@@ -21,7 +21,7 @@ def get_labeled_data(source_dir:Path, stem:str):   # 假设做了前期处理！
 
 ttt = 0
 for stem in stems:
-    if ttt > 2 : 
+    if ttt > 9 : 
         break
     
     mesh = get_labeled_data(source_dir, stem)
