@@ -158,7 +158,7 @@ class PointSISConfig():
         # About SFC
         #Spatial Filling Curve!
         #{"z", "z-trans", "hilbert", "hilbert-trans"}
-        order              = ["hilbert"] # , "hilbert-trans"] # ["z", "z-trans", "hilbert", "hilbert-trans"]# 
+        order              = ["hilbert","hilbert-trans"] # ["z", "z-trans", "hilbert", "hilbert-trans"]# 
         shuffle_orders:bool=False
         mamba_config = asdict(Mamba1Config())
         d_model:      int = 256       # feature_dim pos_dim d_model 是一样的!, 未将d_model放到mamba_config里！
@@ -176,7 +176,7 @@ class PointSISConfig():
         group_ratio:  float = 0.09 # 按ratio方式下采样！
         num_group:    int = 32768 # 4096 # 8172 # 16384
         group_size:   int = 11  # 邻居个数       
-        depth             = [3, 2, 3, 2] # 每层的mamba堆叠深度！！！
+        depth             = [2, 2, 4, 2] # 每层的mamba堆叠深度！！！
         #out_indices       = [3, 7, 11]   # 弃用！
 
         #MaskEncoder
@@ -184,7 +184,7 @@ class PointSISConfig():
         #MaskDecoder!
         nhead:               int = 4
         dim_feedforward:     int = 2048
-        num_feature_levels:  int = 3
+        num_feature_levels:  int = 2 #3
         num_decode_layers:   int = int(num_feature_levels*3)
         num_labels:          int =  TEETH.all_classes
         num_queries:         int = 64             

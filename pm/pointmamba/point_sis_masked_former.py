@@ -201,10 +201,13 @@ class PointSIS_Seg(nn.Module):
         s_pc = self.pointsis_feature_extractor(s_pc)
         b_s = s_pc.batch[-1]+1
         #
+        s_pc.feat = rearrange(s_pc.feat, "(b g) d -> b g d", b=b_s)
+        #
         query_embeddings = self.query_embedder.weight.unsqueeze(0).repeat(b_s, 1, 1)
         query_position_embeddings = self.query_position_embedder.weight.unsqueeze(0).repeat(b_s, 1, 1)
+        # TODO:To be refactored！
         point_embedding = s_pc.feat #s_pc.feat[-1]
-        encoder_hidden_states = [s_pc.feat, s_pc.feat, s_pc.feat]     #s_pc.feat[0:-1]
+        encoder_hidden_states = [s_pc.feat, s_pc.feat]     #s_pc.feat[0:-1]  #config.num_feature_levels控制！
         # TODO:有个问题,mask_decoder的参数point_embedding,encoder_hidden_states是否需要序列化?在Transformer机制下，可以先不考虑?作也容易！
         pred_mask, q = self.mask_decoder(                               # -> b q g , b q d
                             query_embeddings = query_embeddings,

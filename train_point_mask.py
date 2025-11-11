@@ -128,13 +128,13 @@ def train():
     
     model= model.to(device)
     
-    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-5)
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[1000,], gamma=0.2)
+    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[60,], gamma=0.2)
     
     for epoch in range(epoches):
         model= model.train()
         loss_batch = []
-        with tqdm(test_loader) as t:  #
+        with tqdm(train_loader) as t:  #
             for i, data in enumerate(t):
                 optimizer.zero_grad()
                 pc=model(PointCloud(data))
