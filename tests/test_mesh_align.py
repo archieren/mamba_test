@@ -123,7 +123,11 @@ def oral_scan_align(stem:str):
         
         part_box = fit_bounding_box(points_part)
         geos.append(part_box)
-        
+    
+    points_[:,2] = 0
+    project_pc = o3d.geometry.PointCloud()
+    project_pc.points = o3d.utility.Vector3dVector(points_)
+    geos.append(project_pc)   
     # points_31 = np.asarray(mesh.vertices)[label['seg']['31']]
     # mesh_elli_31 = create_a_fit_ellipsoid(points_31, method='bounding')
     # points_36 = np.asarray(mesh.vertices)[label['seg']['36']]

@@ -85,6 +85,12 @@ def align_the_mesh(mesh:o3d.geometry.TriangleMesh): # 不要, s_o_i:S_O_I):
     mesh_out.vertices = o3d.utility.Vector3dVector(points)
     mesh_out.triangles = o3d.utility.Vector3iVector(mesh.triangles)
     mesh_out.rotate(trans_mat)
+    ##2025.11.24 Add shift_z
+    points = np.asarray(mesh_out.vertices)
+    max_z = np.max(points[:, 2])
+    translation_vector = (0, 0, -max_z)
+    mesh_out.translate(translation_vector,relative=True)
+    ##
     mesh_out.compute_vertex_normals()
     
     return mesh_out, trans_mat

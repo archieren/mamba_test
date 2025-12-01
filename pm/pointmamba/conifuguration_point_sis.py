@@ -176,7 +176,14 @@ class PointSISConfig():
         group_ratio:  float = 0.09 # 按ratio方式下采样！
         num_group:    int = 32768 # 4096 # 8172 # 16384
         group_size:   int = 11  # 邻居个数       
-        depth             = [2, 2, 4, 2] # 每层的mamba堆叠深度！！！
+        #depth             = [2, 2, 2, 4, 2] # 每层的mamba堆叠深度！！！ 
+        # TODO: 加了下采样后，加了一个Stage！
+        enc_depths  =   (1, 1, 1, 2, 1)
+        enc_channels=   (256, 256, 256, 256, 256)   #(48, 96, 192, 384, 512)
+        dec_depths  =   (1, 1, 1, 1)
+        dec_channels=   (256, 256, 256, 256)   #(96, 96, 192, 384)
+        stride      =   (4,4,4,4)
+
         #out_indices       = [3, 7, 11]   # 弃用！
 
         #MaskEncoder

@@ -55,7 +55,7 @@ class PointCloud(Dict):
         order指扫描的方式, 是{"z", "z-trans", "hilbert", "hilbert-trans"}的子集
         """
         assert self.batch is not None, "Batch cannot be none!"
-        if not self.grid_coord:
+        if "grid_coord" not in self.keys():
             # if you don't want to operate GridSampling in data augmentation,
             # please add the following augmentation into your pipline:
             # dict(type="Copy", keys_dict={"grid_size": 0.01}),

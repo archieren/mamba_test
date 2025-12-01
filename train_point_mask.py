@@ -118,7 +118,7 @@ def train():
     checkpoints_dir = exp_dir.joinpath('checkpoints/')
     checkpoints_dir.mkdir(exist_ok=True)
     checkpoints_file = checkpoints_dir.joinpath('model_weights.pth')
-    train_loader = dataloader()
+    #train_loader = dataloader()
     test_loader = dataloader(split="test")
     m_config = make_default_config()
     model = MODE_CLS(m_config)
@@ -134,7 +134,7 @@ def train():
     for epoch in range(epoches):
         model= model.train()
         loss_batch = []
-        with tqdm(train_loader) as t:  #
+        with tqdm(test_loader) as t:  #
             for i, data in enumerate(t):
                 optimizer.zero_grad()
                 pc=model(PointCloud(data))

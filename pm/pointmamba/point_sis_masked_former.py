@@ -66,6 +66,126 @@ class CPE(nn.Module):
         s_pc.feat = short_cut + s_pc.feat
         s_pc.sparse_conv_feat = s_pc.sparse_conv_feat.replace_feature(s_pc.feat)
         return s_pc
+
+class GridPooling(nn.Module):     #下
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        stride=2,
+        norm_layer=None,
+        act_layer=None,
+        reduce="max",
+        shuffle_orders=True,
+        traceable=True,  # record parent and cluster
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        self.stride = stride
+        assert reduce in ["sum", "mean", "min", "max"]
+        self.reduce = reduce
+        self.shuffle_orders = shuffle_orders
+        self.traceable = traceable
+
+        self.proj = nn.Linear(in_channels, out_channels)
+        if norm_layer is not None:
+            self.norm = nn.Sequential(norm_layer(out_channels))
+        if act_layer is not None:
+            self.act = nn.Sequential(act_layer())
+
+    def forward(self, point: PointCloud):
+        grid_coord = point.grid_coord
+        grid_coord = torch.div(grid_coord, self.stride, rounding_mode="trunc")
+        grid_coord = grid_coord | point.batch.view(-1, 1) << 48
+        grid_coord, cluster, counts = torch.unique(
+            grid_coord,
+            sorted=True,
+            return_inverse=True,
+            return_counts=True,
+            dim=0,
+        )
+        grid_coord = grid_coord & ((1 << 48) - 1)
+        print(grid_coord.shape, "kkkkkkkkkk")
+        # indices of point sorted by cluster, for torch_scatter.segment_csr
+        _, indices = torch.sort(cluster)
+        # index pointer for sorted point, for torch_scatter.segment_csr
+        idx_ptr = torch.cat([counts.new_zeros(1), torch.cumsum(counts, dim=0)])
+        # head_indices of each cluster, for reduce attr e.g. code, batch
+        head_indices = indices[idx_ptr[:-1]]
+        print(grid_coord.shape, "jjjjjjjjjjjjjjjjjj")
+        point_dict = Dict(
+            feat=torch_scatter.segment_csr(
+                self.proj(point.feat)[indices], idx_ptr, reduce=self.reduce
+            ),
+            coord=torch_scatter.segment_csr(
+                point.coord[indices], idx_ptr, reduce="mean"
+            ),
+            grid_coord=grid_coord,
+            batch=point.batch[head_indices],
+            order = point.order
+        )
+
+        if "name" in point.keys():
+            point_dict["name"] = point.name
+
+        if "grid_size" in point.keys():
+            point_dict["grid_size"] = point.grid_size * self.stride
+
+        if self.traceable:
+            point_dict["pooling_inverse"] = cluster
+            point_dict["pooling_parent"] = point
+        point = PointCloud(point_dict)
+        if self.norm is not None:
+            point.feat = self.norm(point.feat)
+        if self.act is not None:
+            point.feat = self.act(point.feat)
+        point.serialization(order=point.order, shuffle_orders=self.shuffle_orders)
+        point.sparsify()
+        return point
+
+
+class GridUnpooling(nn.Module):
+    def __init__(
+        self,
+        in_channels,
+        skip_channels,
+        out_channels,
+        norm_layer=None,
+        act_layer=None,
+        traceable=False,  # record parent and cluster
+    ):
+        super().__init__()
+        self.proj = nn.Sequential(nn.Linear(in_channels, out_channels))
+        self.proj_skip = nn.Sequential(nn.Linear(skip_channels, out_channels))
+
+        if norm_layer is not None:
+            self.proj.add_module("norm_l", norm_layer(out_channels))
+            self.proj_skip.add_module("norm_l", norm_layer(out_channels))
+
+        if act_layer is not None:
+            self.proj.add_module("act_l",act_layer())
+            self.proj_skip.add_module("act_l",act_layer())
+
+        self.traceable = traceable
+
+    def forward(self, point):
+        assert "pooling_parent" in point.keys()
+        assert "pooling_inverse" in point.keys()
+        parent = point.pop("pooling_parent")
+        inverse = point.pooling_inverse
+        feat = point.feat
+
+        parent.feat = self.proj_skip(parent.feat)
+        parent.feat = parent.feat + self.proj(point.feat)[inverse]    # 注意这个 inverse！ 实现上采样！
+        parent.sparse_conv_feat = parent.sparse_conv_feat.replace_feature(parent.feat)
+
+        if self.traceable:
+            point.feat = feat
+            parent["unpooling_parent"] = point
+        return parent
+
     
 class MixerLayers(nn.Module):
     """
@@ -89,10 +209,10 @@ class MixerLayers(nn.Module):
         # block.layer_idx = layer_idx
         return block
     
-    def forward(self, hidden_states):
+    def forward(self, hidden_states, seq_idx=None):
         residual = None
         for idx, block in enumerate(self.blocks):
-            hidden_states, residual = block( hidden_states, residual)
+            hidden_states, residual = block( hidden_states, residual, seq_idx=seq_idx)
          # 此时就需要补一个 Add -> LN 过程！！！ 才能得到合适的hidden_state output!
         hidden_states = (hidden_states + residual) if residual is not None else hidden_states
         hidden_states = self.norm_f(hidden_states.to(dtype=self.norm_f.weight.dtype))
@@ -110,33 +230,132 @@ class Stage(nn.Module):
             nn.LayerNorm(d_model),
             nn.GELU(),                                               # TODO：看看融合后，要不要激活函数
             nn.Linear(d_model, d_model)
-        )        
+        )
+                
+    # def forward(self, s_pc:PointCloud):
+    #     s_pc = self.cpe(s_pc)
+    #     s_order = s_pc.serialized_order   # o (b g)
+    #     s_inverse = s_pc.serialized_inverse  # o (b g)
+    #     b_s = s_pc.batch[-1]+1
+    #     o_s = s_order.shape[0]
+    #     # s_order, s_inverse 均为 order_size batch_size*num_group
+
+    #     hidden_state  = s_pc.feat   # (b g) d 
+    #     #将各排序拼接,走Mamba流程！
+    #     hidden_state = hidden_state.unsqueeze(0).repeat(o_s,1,1)                 # 为每种排序准备排序的数据,(b g) d => o (b g) d
+    #     hidden_state = torch_scatter.scatter(hidden_state,index=s_order, dim=1)  # 排序: o (b g) d, o (b g) => o (b g) d       
+    #     hidden_state = rearrange(hidden_state, "o (b g) d -> b (o g) d", b=b_s)  # 将各个排序拼接,参看PointMamba的第四版!!      
+    #     hidden_state = self.mixer_layer(hidden_state)
+    #     #将同一点，在各排序情况下的特征拼接到一起！
+    #     # 将阶段性结果输出！                                    #  
+    #     hidden_state = rearrange(hidden_state, "b (o g) d -> o (b g) d", o=o_s).contiguous()  # 拆分各排序
+    #     hidden_state = torch_scatter.scatter(hidden_state,index=s_inverse, dim=1)# 逆排序 => order_size batch_size*num_group d
+        
+    #     hidden_state = rearrange(hidden_state, "o (b g) d -> b g (o d)", b= b_s) # 调整，将同一点，在各排序情况下的特征拼接到一起！
+    #     hidden_state = self.fuse_o(hidden_state)         # FIXME:注意,hidden_state没有融合,这样似乎好点！！
+    #     hidden_state = rearrange(hidden_state, "b g d -> (b g) d")               # (b g) d 
+    #     s_pc.feat = hidden_state
+    #     s_pc.sparse_conv_feat = s_pc.sparse_conv_feat.replace_feature(s_pc.feat)
+    #     return s_pc
+    
+    #   算了，还是这种直白的方式吧！
+    # def forward(self, s_pc:PointCloud):
+    #     s_pc = self.cpe(s_pc)
+    #     s_order = s_pc.serialized_order   # o (b g)
+    #     s_inverse = s_pc.serialized_inverse  # o (b g)
+    #     b_s = s_pc.batch[-1]+1
+    #     o_s = s_order.shape[0]
+    #     # s_order, s_inverse 均为 order_size batch_size*num_group
+
+    #     hidden_state  = s_pc.feat   # (b g) d 
+    #     #将各排序拼接,走Mamba流程！
+        
+    #     output_gathered = []
+    #     for i in range(o_s):
+    #         seq_input   = torch_scatter.scatter(hidden_state,index=s_order[i], dim=0)  # 排序:    (b g) d, (b g) => (b g) d 
+    #         seq_input   = rearrange(seq_input, "(b g) d -> b g d", b=b_s)      
+    #         seq_output  = self.mixer_layer(seq_input)  # TODO: 思考一下,共用一个是否合适？
+    #         seq_output  = rearrange(seq_output, "b g d -> (b g) d").contiguous() 
+    #         seq_output  = torch_scatter.scatter(seq_output,index=s_inverse[i], dim=0)# 逆排序:   (b g) d, (b g) => (b g) d
+    #         output_gathered.append(seq_output)
+        
+    #     hidden_state = torch.cat(output_gathered, dim=-1) # [(b g) d, ...] => [(b g) (o_s d)]
+    #     hidden_state = self.fuse_o(hidden_state)         # FIXME:注意,hidden_state没有融合,这样似乎好点！！
+    #     s_pc.feat = hidden_state
+    #     s_pc.sparse_conv_feat = s_pc.sparse_conv_feat.replace_feature(s_pc.feat)
+    #     return s_pc
+
+    #   运用mamba的变长能力
     def forward(self, s_pc:PointCloud):
         s_pc = self.cpe(s_pc)
         s_order = s_pc.serialized_order   # o (b g)
         s_inverse = s_pc.serialized_inverse  # o (b g)
         b_s = s_pc.batch[-1]+1
-        o_s = s_order.shape[0]       
-        # s_order, s_inverse 均为 order_size batch_size*num_group   
-             
-        hidden_state  = s_pc.feat   # (b g) d  # coord 有三个分量！ normals 有三个分量, point_curvature占一个分量！
+        seq_idx = s_pc.batch.unsqueeze(0).int()
+        o_s = s_order.shape[0]
+        # s_order, s_inverse 均为 order_size batch_size*num_group
+
+        hidden_state  = s_pc.feat   # (b g) d 
         #将各排序拼接,走Mamba流程！
-        hidden_state = hidden_state.unsqueeze(0).repeat(o_s,1,1)                 # 为每种排序准备排序的数据,(b g) d => o (b g) d
-        hidden_state = torch_scatter.scatter(hidden_state,index=s_order, dim=1)  # 排序: o (b g) d, o (b g) => o (b g) d       
-        hidden_state = rearrange(hidden_state, "o (b g) d -> b (o g) d", b=b_s)  # 将各个排序拼接,参看PointMamba的第四版!!      
-        hidden_state = self.mixer_layer(hidden_state)
-        #将同一点，在各排序情况下的特征拼接到一起！
-        # 将阶段性结果输出！                                    #  
-        hidden_state = rearrange(hidden_state, "b (o g) d -> o (b g) d", o=o_s).contiguous()  # 拆分各排序
-        hidden_state = torch_scatter.scatter(hidden_state,index=s_inverse, dim=1)# 逆排序 => order_size batch_size*num_group d
-        hidden_state = rearrange(hidden_state, "o (b g) d -> b g (o d)", b= b_s) # 调整，将同一点，在各排序情况下的特征拼接到一起！
+        
+        output_gathered = []
+        for i in range(o_s):
+            seq_input   = torch_scatter.scatter(hidden_state,index=s_order[i], dim=0)  # 排序:    (b g) d, (b g) => (b g) d 
+            #seq_input   = rearrange(seq_input, "(b g) d -> b g d", b=b_s)
+            seq_input = seq_input.unsqueeze(0)         # "(b g) d -> 1 (b g) d"
+            seq_output  = self.mixer_layer(seq_input, seq_idx = seq_idx)  # TODO: 思考一下,共用一个是否合适？
+            #seq_output  = rearrange(seq_output, "b g d -> (b g) d").contiguous()
+            seq_output = seq_output.squeeze(0)     #  "1 (b g) d -> (b g) d"
+            seq_output  = torch_scatter.scatter(seq_output,index=s_inverse[i], dim=0)# 逆排序:   (b g) d, (b g) => (b g) d
+            output_gathered.append(seq_output)
+        
+        hidden_state = torch.cat(output_gathered, dim=-1) # [(b g) d, ...] => [(b g) (o_s d)]
         hidden_state = self.fuse_o(hidden_state)         # FIXME:注意,hidden_state没有融合,这样似乎好点！！
-        hidden_state = rearrange(hidden_state, "b g d -> (b g) d")               # (b g) d 
         s_pc.feat = hidden_state
         s_pc.sparse_conv_feat = s_pc.sparse_conv_feat.replace_feature(s_pc.feat)
-        return s_pc         
+        return s_pc                 
         
 
+# 旧版:没有下采样的部分!
+# class PointSIS_Feature_Extractor(nn.Module):
+#     def __init__(self, config:PointSISConfig):
+#         super().__init__()
+#         self.num_group = config.num_group
+#         self.order = [config.order] if isinstance(config.order, str) else config.order
+#         self.shuffle_orders = config.shuffle_orders
+#         self.config = config
+#         self.feature_encoder = Feature_Encoder(config.in_channels, config.d_model)
+#         self.stages = nn.ModuleList([Stage(d_model=config.d_model, 
+#                                            depth= d,
+#                                            order_num=len(config.order), 
+#                                            mamba_config=config.mamba_config)
+#                                      for d in config.depth])
+        
+#         self.category = nn.Linear(config.d_cat, config.feature_dims)  # 输入的数据范畴,目前只有有上下之分！      
+
+#     def transform(self, s_pc:PointCloud):
+#         # TODO:: 这一段代码比较臭:原因在于什么样的输入特征及位置编码用作网络的输入！
+#         # s_意味着初始下采样，已经做了
+#         # TODO:后面的多尺度下采样，看情况再做！
+#         # TODO:下面这段的改法，可能影响最小！
+#         #上下颌指示！
+#         s_s_o_i = s_pc.s_o_i                 # b     # s_o_i        
+#         #s_s_o_i = self.category(repeat(s_s_o_i, "b -> (b g) 1", g = self.num_group)) # b -> (b g) d  # TODO!
+#         s_s_o_i = repeat(s_s_o_i, "b -> (b g) 1", g = self.num_group)
+#         s_pc.feat = torch.cat([s_pc.coord, s_pc.feat, s_s_o_i], dim= -1)
+        
+#         s_pc.serialization(order=self.order, shuffle_orders=self.shuffle_orders)
+#         s_pc.sparsify()
+#         return s_pc        
+#     def forward(self, s_pc:PointCloud):
+#         s_pc = self.transform(s_pc)                   
+#         s_pc = self.feature_encoder(s_pc)              # => (b g) d 
+        
+#         #TODO: 怎么作下采样呢？                    # 需不需要?
+#         for _ , stage in enumerate(self.stages):
+#             s_pc = stage(s_pc)  
+#         return s_pc
+    
 class PointSIS_Feature_Extractor(nn.Module):
     def __init__(self, config:PointSISConfig):
         super().__init__()
@@ -145,13 +364,59 @@ class PointSIS_Feature_Extractor(nn.Module):
         self.shuffle_orders = config.shuffle_orders
         self.config = config
         self.feature_encoder = Feature_Encoder(config.in_channels, config.d_model)
-        self.stages = nn.ModuleList([Stage(d_model=config.d_model, 
-                                           depth= d,
-                                           order_num=len(config.order), 
-                                           mamba_config=config.mamba_config)
-                                     for d in config.depth])
+        self.num_stages = len(config.enc_depths)
         
-        self.category = nn.Linear(config.d_cat, config.feature_dims)  # 输入的数据范畴,目前只有有上下之分！      
+        self.enc = nn.Sequential()
+        for s in range(self.num_stages):
+            enc = nn.Sequential()
+            if s > 0 :
+                enc.add_module(
+                    name= f"down{s}",
+                    module= GridPooling(
+                        in_channels = config.enc_channels[s-1],
+                        out_channels=config.enc_channels[s],
+                        stride      =      config.stride[s-1],
+                        norm_layer  =nn.LayerNorm,
+                        act_layer   =nn.GELU,                    
+                    )
+                )
+            enc.add_module(
+                name = f"enc_stage{s}",
+                module = Stage(
+                    d_model=config.enc_channels[s], #config.d_model,
+                    depth= config.enc_depths[s],
+                    order_num=len(config.order), 
+                    mamba_config=config.mamba_config                        
+                )
+            )
+            self.enc.add_module(f"enc{s}",enc)        
+        
+        self.dec = nn.Sequential()
+        dec_channels = list(config.dec_channels) + [config.enc_channels[-1]]
+        for s in reversed(range(self.num_stages-1)):
+            dec = nn.Sequential()
+            dec.add_module(
+                name= f"up{s}",
+                module = GridUnpooling(
+                    in_channels = dec_channels[s+1] ,
+                    skip_channels = config.enc_channels[s],
+                    out_channels = dec_channels[s],
+                    norm_layer=nn.LayerNorm,
+                    act_layer=nn.GELU,
+                    traceable=True,  # record parent and cluster
+                )
+            )
+            dec.add_module(
+                name = f"dec_stage{s}",
+                module = Stage(
+                    d_model=dec_channels[s], #config.d_model,
+                    depth= config.dec_depths[s],
+                    order_num=len(config.order), 
+                    mamba_config=config.mamba_config                        
+                )                
+            )
+            self.dec.add_module(f"dec{s}", dec)
+        #self.category = nn.Linear(config.d_cat, config.feature_dims)  # 输入的数据范畴,目前只有有上下之分！      
 
     def transform(self, s_pc:PointCloud):
         # TODO:: 这一段代码比较臭:原因在于什么样的输入特征及位置编码用作网络的输入！
@@ -164,19 +429,27 @@ class PointSIS_Feature_Extractor(nn.Module):
         s_s_o_i = repeat(s_s_o_i, "b -> (b g) 1", g = self.num_group)
         s_pc.feat = torch.cat([s_pc.coord, s_pc.feat, s_s_o_i], dim= -1)
         
+        s_pc.order = self.order
         s_pc.serialization(order=self.order, shuffle_orders=self.shuffle_orders)
         s_pc.sparsify()
         return s_pc        
     def forward(self, s_pc:PointCloud):
+        # TODO: 这两步做得不是很漂亮！
         s_pc = self.transform(s_pc)                   
         s_pc = self.feature_encoder(s_pc)              # => (b g) d 
-        
+
         #TODO: 怎么作下采样呢？                    # 需不需要?
-        for _ , stage in enumerate(self.stages):
-            s_pc = stage(s_pc)  
+        s_pc = self.enc(s_pc)
+        s_pc = self.dec(s_pc)
+        
+        x = 0
+        while ("unpooling_parent" in s_pc.keys()):
+            x += 1
+            s_pc = s_pc.unpooling_parent
+            
+        input(f"......{x}")
         return s_pc
     
-
     
 class PointSIS_Seg(nn.Module):
     """
@@ -199,7 +472,7 @@ class PointSIS_Seg(nn.Module):
         # s_pc: "coord,feat,offset,grid_size,index_back_to_parent,s_o_i"可用，"labels,shape_weight"看情况!
         # 关于s_o_i,必须注意,将输入调整到统一的姿势,最终看来,还是必要的!
         s_pc = self.pointsis_feature_extractor(s_pc)
-        b_s = s_pc.batch[-1]+1
+        """b_s = s_pc.batch[-1]+1
         #
         s_pc.feat = rearrange(s_pc.feat, "(b g) d -> b g d", b=b_s)
         #
@@ -224,7 +497,7 @@ class PointSIS_Seg(nn.Module):
         pred_mask = rearrange(pred_mask,"b q g -> b g q")
         pred_mask = rearrange(pred_mask, "b g q -> (b g) q")
         s_pc.feat = pred_mask.contiguous()       # FIXME:老问题 s_pc的feat过载太多，看怎么清晰一下！！！
-        s_pc.pred_probs = pred_probs
+        s_pc.pred_probs = pred_probs"""
         return s_pc
     
 class PointSIS_Seg_Model(nn.Module):

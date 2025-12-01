@@ -450,9 +450,9 @@ def test_mask_predictor():
 # test_pointmlp()
 # test_curvenet()
 
-test_point_transformer()
+# test_point_transformer()
 ####test_point_sis()
-# test_patch()
+test_patch()
 # test_serializedpooling()
 # test_remote_pointsis()
 # test_mask_predictor()

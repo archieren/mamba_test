@@ -124,9 +124,9 @@ def make_train_dataset_with_aligned_sampled_data(source_dir= Path("/home/archie/
     group_size = 400
     make_parquet_with_aligned_sampled_data(source_dir=source_dir,out_dir=out_dir,group_size=group_size, clx="train"+clx_a)
 
-# make_train_dataset_with_aligned_sampled_data()
-# make_test_dataset_with_aligned_sampled_data()
-make_train_dataset_with_aligned_sampled_data(source_dir=Path("/home/archie/Projects/data/口扫模型/口扫模型分割新增（有乳牙）"), clx_a="_a")
+make_train_dataset_with_aligned_sampled_data()
+make_test_dataset_with_aligned_sampled_data()
+# make_train_dataset_with_aligned_sampled_data(source_dir=Path("/home/archie/Projects/data/口扫模型/口扫模型分割新增（有乳牙）"), clx_a="_a")
 
 
 
