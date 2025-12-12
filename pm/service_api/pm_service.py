@@ -98,9 +98,9 @@ def read_result(pc:PointCloud, threshold:float):
     for i in range(len(offset)):                 # 
         feat = pc.feat[_offset[i]:offset[i]].sigmoid()                                      # 第i个点云的分割结果!预测的掩码！
         feat = to_numpy(feat)
-
+        
         pred_probs = pc.pred_probs[i]                          #  b q l, fetch i -> q l
-        pred_cls = torch.argmax(l_m(pred_probs),dim=-1)  # 每个 query预测了那个类！ -> q
+        pred_cls = torch.argmax(l_m(pred_probs),dim=-1)  # 每个 query预测了那个类！ -> q        
         pred_cls_s = pred_cls.to_sparse()                # 将预测为0类的去掉了！ FIXME:这是个好办法吗？
         indices = to_numpy(pred_cls_s.indices()[0])                 # TODO:注意这个零！
         values  = to_numpy(pred_cls_s.values())
@@ -109,6 +109,7 @@ def read_result(pc:PointCloud, threshold:float):
         for j in range(len(indices)):
             if values[j] < 33:
                 t_num = TEETH.TEETH_cls_num[values[j]]
+                print(t_num)
                 (one_teeth_seg,)= np.where(feat[:, indices[j]] > threshold)
                 seg_result[f'{t_num}'] = one_teeth_seg.tolist()
 

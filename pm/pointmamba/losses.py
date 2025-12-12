@@ -388,12 +388,11 @@ class PMHungarianMatcher(nn.Module):
 class PMLoss(nn.Module):
     def __init__(self, config: PointSISConfig):
         """
-        The M2F Loss. The loss is computed very similar to DETR. The process happens in two steps: 1) we
-        compute hungarian assignment between ground truth masks and the outputs of the model 2) we supervise each pair
-        of matched ground-truth / prediction (supervise class and mask)
-
+        The M2F Loss. The loss is computed very similar to DETR. The process happens in two steps: 
+        1) we compute hungarian assignment between ground truth masks and the outputs of the model 
+        2) we supervise each pair of matched ground-truth / prediction (supervise class and mask)
         Args:
-            config (`M2FConfig`):
+            config (`PointSISConfig`):
                 The configuration for M2F model also containing loss calculation specific parameters.
             weight_dict (`Dict[str, float]`):
                 A dictionary of weights to be applied to the different losses.

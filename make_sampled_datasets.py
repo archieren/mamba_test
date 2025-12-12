@@ -46,7 +46,7 @@ def collect_group_with_aligned_and_sampled_data(source_dir:Path, stems:list[str]
         normals = np.asarray(mesh.vertex_normals,dtype=float)
         label = np.zeros((vertices.shape[0],), dtype=int) #dtype=np.dtype('b'))
         for label_key in label_keys:
-            label[label_[label_key]] = int(label_key)     # 
+            label[label_[label_key]] = int(label_key)     # label_[label_key] == [index_of_vertex]
         return vertices, triangles, normals, label
     
     def bi_cls(x, *y):  # 没想明白*y！

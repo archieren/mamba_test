@@ -24,13 +24,13 @@ class TEETH:
                                                 24:38, 23:37, 22:36, 21:35, 20:34, 19:33, 18:32, 17:31,
                                                 32:48, 31:47, 30:46, 29:45, 28:44, 27:43, 26:42, 25:41}
 
-    superior_gingival :ClassVar[int] = 33
-    inferior_gingival :ClassVar[int] = 34
+    # superior_gingival :ClassVar[int] = 33
+    # inferior_gingival :ClassVar[int] = 34
 
-    superior_dentition :ClassVar[int] = 35
-    inferior_dentition :ClassVar[int] = 36
+    # superior_dentition :ClassVar[int] = 35
+    # inferior_dentition :ClassVar[int] = 36
 
-    all_classes :ClassVar[int]  = 36
+    all_classes :ClassVar[int]  = 32
 
 # 所有牙齿都归为一类
 # @dataclass
@@ -102,19 +102,19 @@ def tooth_lables(labels:torch.Tensor, shape_weight:torch.Tensor) -> List[torch.T
                 class_labels.append(cls)
                 up_or_low="up" if i//10 in {1, 2, 5, 6} else "low"  # TODO:how? # FIXME:这里曾经出现过翻车性的Bug!  % -> //等等!!
         #       
-        non_tooth_mask = torch.where(labels[b]>0, 0, 1).unsqueeze(0)             # 牙龈
-        if non_tooth_mask.sum()>0:
-           #
-           masks.append(non_tooth_mask)
-           #
-           class_labels.append(TEETH.superior_gingival if up_or_low == "up" else TEETH.inferior_gingival)
+        # non_tooth_mask = torch.where(labels[b]>0, 0, 1).unsqueeze(0)             # 牙龈
+        # if non_tooth_mask.sum()>0:
+        #    #
+        #    masks.append(non_tooth_mask)
+        #    #
+        #    class_labels.append(TEETH.superior_gingival if up_or_low == "up" else TEETH.inferior_gingival)
 
-        all_tooth_mask = torch.where(labels[b]>0, 1, 0).unsqueeze(0)             # 所有牙齿
-        if all_tooth_mask.sum()> 0:
-            #
-            masks.append(all_tooth_mask)
-            #
-            class_labels.append(TEETH.superior_dentition if up_or_low == "up" else TEETH.inferior_dentition)
+        # all_tooth_mask = torch.where(labels[b]>0, 1, 0).unsqueeze(0)             # 所有牙齿
+        # if all_tooth_mask.sum()> 0:
+        #     #
+        #     masks.append(all_tooth_mask)
+        #     #
+        #     class_labels.append(TEETH.superior_dentition if up_or_low == "up" else TEETH.inferior_dentition)
 
         t = len(class_labels)
         class_labels = torch.tensor(class_labels, device= labels.device).long()   # [t,......]   
@@ -130,12 +130,12 @@ def tooth_lables(labels:torch.Tensor, shape_weight:torch.Tensor) -> List[torch.T
 
 @dataclass
 class Mamba1Config:     # 抄自 Mamba1的初始化参数!!!
-
+    # 要注意确保 d_model * expand / headdim = multiple of 8
     # d_model: int        # D in paper/comments
-    d_state: int = 64   # N in paper/comments
+    d_state: int = 64   # N in paper/comments -- Default 128
     d_conv:  int = 4
-    expand:  int = 2     # E in paper/comments
-
+    expand:  int = 2     # E in paper/comments -- Default 2
+    headdim: int = 24    # Default is 64
     # dt_rank:    Union[int, str] = 'auto'
     # dt_min:     float = 0.001
     # dt_max:     float = 0.1
@@ -154,16 +154,16 @@ class Mamba1Config:     # 抄自 Mamba1的初始化参数!!!
 @dataclass
 class PointSISConfig():
         d_cat:        int=1      # 数据的范畴
-        in_channels:  int = 8    # 3
+        in_channels:  int = 7    # coord + normals + cur
         # About SFC
         #Spatial Filling Curve!
         #{"z", "z-trans", "hilbert", "hilbert-trans"}
         order              = ["hilbert","hilbert-trans"] # ["z", "z-trans", "hilbert", "hilbert-trans"]# 
         shuffle_orders:bool=False
         mamba_config = asdict(Mamba1Config())
-        d_model:      int = 256       # feature_dim pos_dim d_model 是一样的!, 未将d_model放到mamba_config里！
-        feature_dims: int = d_model
-        pos_dims:     int = d_model
+        d_model:      int = 384       # feature_dim pos_dim d_model 是一样的!, 未将d_model放到mamba_config里！
+        # feature_dims: int = d_model
+        # pos_dims:     int = d_model
         
         #Follow SWIN
         patch_size:   int = 4096
@@ -178,11 +178,11 @@ class PointSISConfig():
         group_size:   int = 11  # 邻居个数       
         #depth             = [2, 2, 2, 4, 2] # 每层的mamba堆叠深度！！！ 
         # TODO: 加了下采样后，加了一个Stage！
-        enc_depths  =   (1, 1, 1, 2, 1)
-        enc_channels=   (256, 256, 256, 256, 256)   #(48, 96, 192, 384, 512)
-        dec_depths  =   (1, 1, 1, 1)
-        dec_channels=   (256, 256, 256, 256)   #(96, 96, 192, 384)
-        stride      =   (4,4,4,4)
+        enc_depths  =   (3, 3, 3, 6, 3)
+        enc_channels=   (96, 96, 192, 384, 384)    
+        dec_depths  =   (3, 3, 3, 3)
+        dec_channels=   (96, 96, 192, 384)    
+        stride      =   (64,2,2,2)           # 这一块,可能需要仔细考虑！
 
         #out_indices       = [3, 7, 11]   # 弃用！
 
@@ -191,7 +191,7 @@ class PointSISConfig():
         #MaskDecoder!
         nhead:               int = 4
         dim_feedforward:     int = 2048
-        num_feature_levels:  int = 2 #3
+        num_feature_levels:  int = 3       # len(enc_depths) - 2
         num_decode_layers:   int = int(num_feature_levels*3)
         num_labels:          int =  TEETH.all_classes
         num_queries:         int = 64             

@@ -15,15 +15,18 @@ class MaskPredictor(nn.Module):
     """
     def __init__(self, config:PointSISConfig):
         super().__init__()
+        self.embed_dim = config.d_model
         self.nhead = config.nhead
-        self.query_mlp = MLP(in_channels=config.d_model,
-                            out_channels=config.d_model, 
-                            hidden_channels=int(config.d_model *2))
+        # TODO: 要还是不要?好像无差别！
+        # self.query_mlp = MLP(in_channels=self.embed_dim,
+        #                     out_channels=self.embed_dim, 
+        #                     hidden_channels=int(self.embed_dim *2))
+        #self.query_norm = nn.LayerNorm(self.embed_dim)           # TODO:为什么没有这个？ 看Transformer Decoder的结构！
 
     def forward(self, query:torch.Tensor, memory:torch.Tensor) -> Tuple[Tensor]:
-        query_emb = self.query_mlp(query)                                            # b q d -> b q d
+        #query_emb = self.query_mlp(query)              # self.query_norm(self.query_mlp(query))  # b q d -> b q d
         # TODO: 据说einsum对jit不友好,...
-        predicated_mask = einsum(query_emb, memory, "b q d, b g d -> b q g ")                # b q d , b g d -> b q g
+        predicated_mask = einsum(query, memory, "b q d, b g d -> b q g ")                # b q d , b g d -> b q g
         attension_mask = predicated_mask.sigmoid().squeeze(1).repeat(1, self.nhead, 1, 1)   # b q g -> b h q g
         attension_mask = rearrange(attension_mask, " b h q g -> (b h) q g")          # 注意： torch.nn.MultiheadAttention的要求！！！ 原文实现用的是flatten(0,1) 
         attension_mask = (attension_mask < 0.5).bool()
@@ -183,7 +186,7 @@ class MaskDecoder(nn.Module):
         super().__init__()
         self.mask_predictor = MaskPredictor(config)
 
-        self.num_feature_levels = config.num_feature_levels  # TODO: 是否考虑真的下采样？
+        self.num_feature_levels = config.num_feature_levels
         self.num_decoder_layers = config.num_decode_layers
         self.layers = nn.ModuleList(
             [MaskedAttentionDecoderLayer(config) for _ in range(self.num_decoder_layers)]
@@ -201,16 +204,16 @@ class MaskDecoder(nn.Module):
         #
         query_position_embeddings: torch.Tensor = None,
         ) -> Tuple[Tensor]:
-        hidden_states = query_embeddings  # b q d                            # 作为decode_layer的输入！ 直接级联
+        query_hidden_states = query_embeddings  # b q d                            # 作为decode_layer的输入！ 直接级联
 
-        normalized_hidden_states = self.layernorm(query_embeddings)        # 作为MaskPredictor的输入！须先normalize！
-        predicated_mask, attention_mask = self.mask_predictor(normalized_hidden_states, point_embeddings)
+        query_hidden_states = self.layernorm(query_embeddings)        # 作为MaskPredictor的第一次输入！须先normalize！
+        predicated_mask, attention_mask = self.mask_predictor(query_hidden_states, point_embeddings)
         for idx, decoder_layer in enumerate(self.layers):
             level_index = idx % self.num_feature_levels
             attention_mask[torch.where(attention_mask.sum(-1) == attention_mask.shape[-1])] = False  # 避免什么？
-            layer_outputs = decoder_layer(
+            query_hidden_states = decoder_layer(                            # 注: layer_output 已经被 normalized了！
                 # Q
-                hidden_states,
+                query_hidden_states,
                 query_position_embeddings=query_position_embeddings,
                 #level_index=level_index,
                 # k,v
@@ -218,8 +221,7 @@ class MaskDecoder(nn.Module):
                 #position_embeddings = ??,                   # TODO: 要考虑
                 encoder_attention_mask=attention_mask,
             )
-            normalized_hidden_states = self.layernorm(layer_outputs)
-            predicated_mask, attention_mask = self.mask_predictor(normalized_hidden_states,point_embeddings)
-            hidden_states = layer_outputs
+            predicated_mask, attention_mask = self.mask_predictor(query_hidden_states,point_embeddings)
+            
 
-        return predicated_mask, hidden_states
+        return predicated_mask, query_hidden_states
