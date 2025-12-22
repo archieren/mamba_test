@@ -128,8 +128,8 @@ def train():
     
     model= model.to(device)
     
-    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4)
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[256,], gamma=0.1)
+    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-5)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[256,], gamma=0.9)
     
     for epoch in range(epoches):
         model= model.train()

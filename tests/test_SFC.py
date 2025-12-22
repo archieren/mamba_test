@@ -445,14 +445,14 @@ def test_mask_predictor():
 
 # test_PointCloud()
 # test_grouping_by_ratio()
-# test_grouping_by_fps()
+test_grouping_by_fps()
 # test_fps_pointnet2()
 # test_pointmlp()
 # test_curvenet()
 
 # test_point_transformer()
 ####test_point_sis()
-test_patch()
+# test_patch()
 # test_serializedpooling()
 # test_remote_pointsis()
 # test_mask_predictor()

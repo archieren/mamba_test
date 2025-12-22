@@ -101,7 +101,8 @@ class GridPooling(nn.Module):     #下
     def forward(self, point: PointCloud):
         grid_coord = point.grid_coord        
         grid_coord = torch.div(grid_coord, self.stride, rounding_mode="trunc")
-        grid_coord = grid_coord | point.batch.view(-1, 1) << 48
+        #Start (TODO: 要理解这儿干了什么？)
+        grid_coord = grid_coord | point.batch.view(-1, 1) << 48    # 加上批号！
         grid_coord, cluster, counts = torch.unique(
             grid_coord,
             sorted=True,
@@ -109,7 +110,8 @@ class GridPooling(nn.Module):     #下
             return_counts=True,
             dim=0,
         )
-        grid_coord = grid_coord & ((1 << 48) - 1)
+        grid_coord = grid_coord & ((1 << 48) - 1)                   # 去掉批号！
+        #End
         # indices of point sorted by cluster, for torch_scatter.segment_csr
         _, indices = torch.sort(cluster)
         # index pointer for sorted point, for torch_scatter.segment_csr
@@ -232,43 +234,48 @@ class Stage(nn.Module):
     def __init__(self, feat_dim, depth, order_num, mamba_config):
         super().__init__()
         self.cpe = CPE(feat_dim, feat_dim)
-        self.mixer_layer = nn.ModuleList([MixerLayers(d_model=feat_dim, depth= depth, mamba_config=mamba_config)
+        self.mixer_layers = nn.ModuleList([MixerLayers(d_model=feat_dim, depth= depth, mamba_config=mamba_config)
                                           for _ in range(order_num)
                                           ]
                                         )                            #TODO:  各个次序对应一个!
         self.fuse_o = nn.Sequential(                                 #合并各排序的特征。
-            nn.Linear(feat_dim * order_num, feat_dim),
+            nn.Linear(feat_dim * (order_num + 1), feat_dim),         # TODO: +1 相当于搞了个残差？
             nn.LayerNorm(feat_dim),
             nn.GELU(),                                               # TODO: 看看融合后，要不要激活函数
             nn.Linear(feat_dim, feat_dim),                           # TODO:
         )
-                
-    #   运用mamba的变长能力
-    def forward(self, s_pc:PointCloud):
-        s_pc = self.cpe(s_pc)
+        #self.norm_f = nn.LayerNorm(feat_dim)
+
+    def scan(self, s_pc:PointCloud):
         s_order = s_pc.serialized_order   # o (b g)
         s_inverse = s_pc.serialized_inverse  # o (b g)
         # b_s = s_pc.batch[-1]+1
         seq_idx = s_pc.batch.unsqueeze(0).int()
         o_s = s_order.shape[0]
         # s_order, s_inverse 均为 order_size batch_size*num_group
-
         hidden_state  = s_pc.feat   # (b g) d 
         #将各排序拼接,走Mamba流程！
         
         output_gathered = []
-        for i in range(o_s):
+        output_gathered.append(hidden_state)
+        for i in range(o_s):                     # 对每个排序， 走一趟mixer_layers
             seq_input   = torch_scatter.scatter(hidden_state,index=s_order[i], dim=0)  # 排序:    (b g) d, (b g) => (b g) d 
             seq_input = seq_input.unsqueeze(0)         # "(b g) d -> 1 (b g) d"
-            seq_output  = self.mixer_layer[i](seq_input, seq_idx = seq_idx)  # TODO: 思考一下,共用一个是否合适？
+            seq_output  = self.mixer_layers[i](seq_input, seq_idx = seq_idx)  # TODO: 思考一下,共用一个是否合适？
             seq_output = seq_output.squeeze(0)     #  "1 (b g) d -> (b g) d"
             seq_output  = torch_scatter.scatter(seq_output,index=s_inverse[i], dim=0)# 逆排序:   (b g) d, (b g) => (b g) d
-            output_gathered.append(seq_output)
+            output_gathered.append(seq_output) # 
         
         hidden_state = torch.cat(output_gathered, dim=-1) # [(b g) d, ...] => [(b g) (o_s d)]
         hidden_state = self.fuse_o(hidden_state)         # FIXME:注意,hidden_state没有融合,这样似乎好点！！
-        s_pc.feat = hidden_state
+        
+        #short_cut!    # TODO: 看看有无必要？
+        s_pc.feat = hidden_state #self.norm_f(s_pc.feat + hidden_state)
         s_pc.sparse_conv_feat = s_pc.sparse_conv_feat.replace_feature(s_pc.feat)
+        return s_pc                       
+    #   运用mamba的变长能力
+    def forward(self, s_pc:PointCloud):
+        s_pc = self.scan(self.cpe(s_pc))        
         return s_pc                 
         
 
