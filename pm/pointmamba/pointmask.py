@@ -136,46 +136,46 @@ class MaskedAttentionDecoderLayer(nn.Module):
     def forward(  # 简化,我只考虑pre_norm==False的情况.Mask2Former里的缺省设置. TODO:思考有什么区别！
         self,
         # Q
-        hidden_states: torch.Tensor,
+        query: torch.Tensor,
         query_position_embeddings: Optional[torch.Tensor] = None,
         # K,V
-        encoder_hidden_states: Optional[torch.Tensor] = None,    # To k,v
-        position_embeddings:   Optional[torch.Tensor] = None,
+        encoder_output: Optional[torch.Tensor] = None,    # To k,v
+        encoder_output_position_embeddings:   Optional[torch.Tensor] = None,
         # predicated_mask
-        encoder_attention_mask: Optional[torch.Tensor] = None,    # TODO: 这个要理解！
+        attention_mask: Optional[torch.Tensor] = None,    # TODO: 这个要理解！
     ) -> Tensor:
         # Masked(Cross)-Attention Block
-        residual = hidden_states
-        hidden_states, _ = self.cross_attn(                       # 这是 torch自带的！
-            query=self.with_pos_embed(hidden_states, query_position_embeddings),
-            key  =self.with_pos_embed(encoder_hidden_states, position_embeddings),
-            value=encoder_hidden_states,
-            attn_mask=encoder_attention_mask,
+        residual = query
+        query, _ = self.cross_attn(                       # 这是 torch自带的！
+            query=self.with_pos_embed(query, query_position_embeddings),
+            key  =self.with_pos_embed(encoder_output, encoder_output_position_embeddings),
+            value=encoder_output,
+            attn_mask=attention_mask,
             key_padding_mask=None,
         )
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
-        hidden_states = residual + hidden_states
-        hidden_states = self.cross_attn_layer_norm(hidden_states)
+        query = nn.functional.dropout(query, p=self.dropout, training=self.training)
+        query = residual + query
+        query = self.cross_attn_layer_norm(query)
         # Self Attention Block
-        residual = hidden_states
-        hidden_states = self.self_attn(                            # 
-            hidden_states=hidden_states,
+        residual = query
+        query = self.self_attn(                            # 
+            hidden_states=query,
             position_embeddings=query_position_embeddings,
             attention_mask=None,
         )
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
-        hidden_states = residual + hidden_states
-        hidden_states = self.self_attn_layer_norm(hidden_states)
+        query = nn.functional.dropout(query, p=self.dropout, training=self.training)
+        query = residual + query
+        query = self.self_attn_layer_norm(query)
         # Fully Connected
-        residual = hidden_states
-        hidden_states = self.activation_fn(self.fc1(hidden_states))
-        hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
-        hidden_states = self.fc2(hidden_states)
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
-        hidden_states = residual + hidden_states
-        hidden_states = self.final_layer_norm(hidden_states)
+        residual = query
+        query = self.activation_fn(self.fc1(query))
+        query = nn.functional.dropout(query, p=self.activation_dropout, training=self.training)
+        query = self.fc2(query)
+        query = nn.functional.dropout(query, p=self.dropout, training=self.training)
+        query = residual + query
+        query = self.final_layer_norm(query)
 
-        return hidden_states
+        return query
 
 class MaskDecoder(nn.Module):
     """
@@ -213,13 +213,13 @@ class MaskDecoder(nn.Module):
             attention_mask[torch.where(attention_mask.sum(-1) == attention_mask.shape[-1])] = False  # 避免什么？
             query_hidden_states = decoder_layer(                            # 注: layer_output 已经被 normalized了！
                 # Q
-                query_hidden_states,
-                query_position_embeddings=query_position_embeddings,
+                query = query_hidden_states,
+                query_position_embeddings = query_position_embeddings,
                 #level_index=level_index,
                 # k,v
-                encoder_hidden_states=encoder_hidden_states[level_index],
+                encoder_output=encoder_hidden_states[level_index],
                 #position_embeddings = ??,                   # TODO: 要考虑
-                encoder_attention_mask=attention_mask,
+                attention_mask=attention_mask,
             )
             predicated_mask, attention_mask = self.mask_predictor(query_hidden_states,point_embeddings)
             

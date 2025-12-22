@@ -23,6 +23,20 @@ from pm.utils.point_cloud import PointCloud, Grouper_By_NumGroup,FeatPropagation
 #很拙劣的东西。如果能好的话,这些代码优化!
 INITIAL_FEATURE_DIMS = 4      # 在目前的构造中 是 3维的norms+1维的那个特殊的曲率！
 
+# class Shape_Encoder(nn.Module):
+#     """形状编码
+#     参考来源
+#         3DShape2VecSet - A 3D Shape Representation for Neural Fields and Generative Diffusion Models
+#     准备用形状描述，来构造某种相对位置编码！
+#     """
+#     def __init__(self, config:PointSISConfig):
+#         super().__init__()
+#         self.cross_attn = nn.MultiheadAttention(self.embed_dim, config.nhead, config.dropout, batch_first=True)
+#         self.cross_attn_layer_norm = nn.LayerNorm(self.embed_dim)    
+#     def forward(self, s_pc:PointCloud):
+
+#         return
+
 class Feature_Encoder(nn.Module):
     """
     特征编码，直接用MLP来处理！
@@ -350,10 +364,6 @@ class PointSIS_Feature_Extractor(nn.Module):
 
     def transform(self, s_pc:PointCloud):
         # TODO:: 这一段代码比较臭:原因在于什么样的输入特征及位置编码用作网络的输入,一直是被调整的对象！！
-        #上下颌指示！
-        #s_s_o_i = s_pc.s_o_i                 # b     # s_o_i        
-        #s_s_o_i = self.category(repeat(s_s_o_i, "b -> (b g) 1", g = self.num_group)) # b -> (b g) d  # TODO!
-        #s_s_o_i = repeat(s_s_o_i, "b -> (b g) 1", g = self.num_group)
         s_pc.feat = torch.cat([s_pc.coord, s_pc.feat], dim= -1)
         
         s_pc.order = self.order
