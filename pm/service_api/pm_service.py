@@ -86,7 +86,7 @@ def make_data_dict(mesh:o3d.geometry.TriangleMesh, s_o_i:str):
     normals = torch.asarray(np.asarray(mesh.vertex_normals), device=device,dtype=torch.float) 
     offset = torch.tensor([points.shape[0]], device=device).cumsum(0).int() # cumsum就成了浮点数了!
     s_o_i = torch.tensor([s_o_i], device=device).float()
-    data = Dict(coord=points,feat=normals, offset=offset, s_o_i=s_o_i, grid_size=1.0e-2)
+    data = Dict(coord=points,feat=normals, offset=offset, s_o_i=s_o_i) # , grid_size=1.0e-2)
     return data    
 
 def read_result(pc:PointCloud, threshold:float):

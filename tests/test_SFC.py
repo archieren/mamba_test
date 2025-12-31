@@ -445,7 +445,7 @@ def test_mask_predictor():
 
 # test_PointCloud()
 # test_grouping_by_ratio()
-test_grouping_by_fps()
+##test_grouping_by_fps()
 # test_fps_pointnet2()
 # test_pointmlp()
 # test_curvenet()

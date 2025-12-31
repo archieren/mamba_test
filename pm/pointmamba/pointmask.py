@@ -198,7 +198,7 @@ class MaskDecoder(nn.Module):
         # Q         
         query_embeddings: torch.Tensor,
         # 实质上是编码其的最后一层输出！
-        point_embeddings: torch.Tensor,
+        mask_features: torch.Tensor,
         # 编码器各层的输出！
         encoder_hidden_states: torch.Tensor,
         #
@@ -207,7 +207,7 @@ class MaskDecoder(nn.Module):
         query_hidden_states = query_embeddings  # b q d                            # 作为decode_layer的输入！ 直接级联
 
         query_hidden_states = self.layernorm(query_embeddings)        # 作为MaskPredictor的第一次输入！须先normalize！
-        predicated_mask, attention_mask = self.mask_predictor(query_hidden_states, point_embeddings)
+        predicated_mask, attention_mask = self.mask_predictor(query_hidden_states, mask_features)
         for idx, decoder_layer in enumerate(self.layers):
             level_index = idx % self.num_feature_levels
             attention_mask[torch.where(attention_mask.sum(-1) == attention_mask.shape[-1])] = False  # 避免什么？
@@ -217,11 +217,11 @@ class MaskDecoder(nn.Module):
                 query_position_embeddings = query_position_embeddings,
                 #level_index=level_index,
                 # k,v
-                encoder_output=encoder_hidden_states[level_index],
+                encoder_output = encoder_hidden_states[level_index],
                 #position_embeddings = ??,                   # TODO: 要考虑
-                attention_mask=attention_mask,
+                attention_mask = attention_mask,
             )
-            predicated_mask, attention_mask = self.mask_predictor(query_hidden_states,point_embeddings)
+            predicated_mask, attention_mask = self.mask_predictor(query_hidden_states,mask_features)
             
 
         return predicated_mask, query_hidden_states

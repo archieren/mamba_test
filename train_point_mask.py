@@ -94,7 +94,7 @@ def collate_fn(batch, device):
                 offset=offset,
                 shape_weight=shape_weight,
                 s_o_i = s_o_i, 
-                grid_size=1.0e-2)    
+                grid_size=4.0e-1)    # TODO: grid_size要不要改成动态的？
 
 collate_fn = partial(collate_fn, device=device)
 
@@ -128,8 +128,8 @@ def train():
     
     model= model.to(device)
     
-    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-5)
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[256,], gamma=0.9)
+    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[256,], gamma=0.1)
     
     for epoch in range(epoches):
         model= model.train()

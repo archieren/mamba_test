@@ -154,7 +154,7 @@ class Mamba1Config:     # 抄自 Mamba1的初始化参数!!!
 @dataclass
 class PointSISConfig():
         d_cat:        int=1      # 数据的范畴
-        in_channels:  int = 7    # coord + normals + cur
+        in_channels:  int = 7    # 7: coord + normals + cur;  4: coord + normals;  3: coord only
         # About SFC
         #Spatial Filling Curve!
         #{"z", "z-trans", "hilbert", "hilbert-trans"}
@@ -182,7 +182,7 @@ class PointSISConfig():
         enc_channels=   (96, 96, 192, 384, 384)    
         dec_depths  =   (3, 3, 3, 3)
         dec_channels=   (96, 96, 192, 384)    
-        stride      =   (64,2,2,2)           # 这一块,可能需要仔细考虑！
+        stride      =   (2,2,2,2)           # 这一块,可能需要仔细考虑！
 
         #out_indices       = [3, 7, 11]   # 弃用！
 

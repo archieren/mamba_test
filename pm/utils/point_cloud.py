@@ -1,3 +1,4 @@
+import time
 import torch
 import torch.nn as nn
 
@@ -316,15 +317,18 @@ def __samples(parent_pc:PointCloud, s_idx:torch.Tensor, s_offset:torch.Tensor, g
     N = group_size
     #取得相邻n个点的坐标！                                                           
     s_n_idx, _dist = knn(N, parent_pc.coord, parent_pc.offset, s_xyz,s_offset)       # (b g) N,_ or n_1+n_2+...+n_b N, _
-
+    _grid_size_decision(parent_pc, s_offset, s_xyz)
     s_n = parent_pc.coord[s_n_idx]                                                   # (b g) N 3 or n_1+n_2+...+n_b N 3 # 没特定feat时,用他
     # 这种搞法，类似梯度
     # s_n = s_n - s_xyz.unsqueeze(1)                                                         # (b g) N 3 or n_1+n_2+...+n_b N 3 
     # s_n = torch.cat([s_xyz.unsqueez(1), s_n], dim= 1)                                        # (b g) (N+1) 3 or n_1+n_2+...+n_b (N+1) 3
-    # 由于__samples看起来只用一次，我假设 feat将会是 vertex_normals!有normals，就用曲率！
+    # TODO: 由于__samples看起来只用一次，我假设 feat将会是 vertex_normals!有normals，就用曲率！
+    # TODO: 目前也可以假设parent_pc就没有grid_size这个属性！没用到过！
     s_data = Dict(coord=s_xyz,
             offset=s_offset, 
-            grid_size=parent_pc.grid_size,                                            # 用父点云的grid_size
+            grid_size=4.0e-1, 
+            # TODO：用父点云的grid_size,应当是个巨大的错误！以后再搞成动态的！(median / 2.0)
+            # TODO: 在这个地方设置grid_size,从程序的角度来说，似乎不好！
             index_back_to_parent=s_idx)
 
     if "feat" in parent_pc.keys():                                                              # 目前，feat就是 normals！
@@ -340,6 +344,23 @@ def __samples(parent_pc:PointCloud, s_idx:torch.Tensor, s_offset:torch.Tensor, g
     if "s_o_i" in parent_pc.keys():
         s_data.update(s_o_i=parent_pc.s_o_i)
     return PointCloud(s_data)
+
+def _grid_size_decision(parent_pc, s_offset, s_xyz):
+    """
+    计算并打印采样点云和原始点云中的每个点到最近的6个点的距离，以便估算grid_size
+    但我看了看，有点耗时，先还是按静态方式处理！
+    """
+    def time_it(start_time):
+        stop_time = time.time()
+        print("耗时: {:.2f}秒".format(stop_time - start_time))
+        return
+    
+    start_time = time.time()
+    _, _dist0 = knn(6, parent_pc.coord, parent_pc.offset, parent_pc.coord, parent_pc.offset)
+    _, _dist1 = knn(6, s_xyz,s_offset, s_xyz,s_offset)
+    print("_dist0:", _dist0[:,1:].min(), _dist0[:,1:].median(), _dist0[:,1:].max())  # TODO: 看看平均距离！
+    print("_dist1:", _dist1[:,1:].min(),_dist1[:,1:].median(), _dist1[:,1:].max())  # TODO: 看看平均距离！
+    time_it(start_time)
 
 
 class Grouper_By_NumGroup(nn.Module):   # TODO：这个应当改名。采样的时候，还生成了Feature！

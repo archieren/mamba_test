@@ -79,7 +79,7 @@ def collect_group_with_aligned_and_sampled_data(source_dir:Path, stems:list[str]
         label    = torch.tensor(label)
         label = label.map_(label,bi_cls).cuda(device)
 
-        data = Dict(coord=vertices,feat=normals, labels=label, offset=offset, grid_size=1.0e-2)
+        data = Dict(coord=vertices,feat=normals, labels=label, offset=offset) # , grid_size=1.0e-2)
         s_pc = grouper(PointCloud(data))
         # print(s_pc.keys())
         coord, feat, label, shape_weight = s_pc.coord, s_pc.feat, s_pc.labels, s_pc.shape_weight

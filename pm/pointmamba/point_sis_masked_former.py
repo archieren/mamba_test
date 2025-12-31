@@ -44,7 +44,7 @@ class Feature_Encoder(nn.Module):
     def __init__(self, in_channel, out_channel):
         super().__init__()
         self.e_i = 128           #内部用的channel数！
-        self.encoder = nn.Sequential(
+        self.embeding = nn.Sequential(
             nn.Linear(in_channel, self.e_i *2),
             nn.GELU(),
             nn.Linear(self.e_i * 2, out_channel)            
@@ -52,10 +52,9 @@ class Feature_Encoder(nn.Module):
     
     def forward(self, s_pc:PointCloud):
         """
-        BG 4 -> BG C
+        BG i -> BG o
         """
-        feat = self.encoder(s_pc.feat)
-        s_pc.feat = feat
+        s_pc.feat = self.embeding(s_pc.feat)
         s_pc.sparse_conv_feat = s_pc.sparse_conv_feat.replace_feature(s_pc.feat)
         return s_pc
 
@@ -66,18 +65,25 @@ class CPE(nn.Module):
     def __init__(self, in_channels,out_channels):
         super().__init__()
         self.e_o = out_channels
+        # self.pos_proj = nn.Linear(3, in_channels)
         self.spconv_f = spconv.SubMConv3d(in_channels=in_channels,out_channels=out_channels,kernel_size=3,bias=True)
         self.fc1      = nn.Linear(out_channels, out_channels)
         self.norm_f   = nn.LayerNorm(out_channels)
     
     def forward(self, s_pc:PointCloud):
-        # s_pc.feat和s_pc.sparse_conv_feat.features 应当是一致的！
+        # assert s_pc.feat和s_pc.sparse_conv_feat.features 应当是一致的！
         short_cut = s_pc.feat  # TODO: 需不需要运用残差结构能？
+        # #掺入坐标
+        # pos_embed = self.pos_proj(s_pc.coord)  # BG C
+        # s_pc.feat = s_pc.feat + pos_embed
+        # s_pc.sparse_conv_feat = s_pc.sparse_conv_feat.replace_feature(s_pc.feat)
+        # #
         s_pc.sparse_conv_feat = self.spconv_f(s_pc.sparse_conv_feat)
         s_pc.feat = s_pc.sparse_conv_feat.features
         s_pc.feat = self.fc1(s_pc.feat)
-        s_pc.feat = short_cut + s_pc.feat  # 1
-        s_pc.feat = self.norm_f(s_pc.feat) # 2 TODO: 这两行的次序有什么问题吗？
+        s_pc.feat = self.norm_f(s_pc.feat) # 1
+        #
+        s_pc.feat = short_cut + s_pc.feat  # 2
         s_pc.sparse_conv_feat = s_pc.sparse_conv_feat.replace_feature(s_pc.feat)
         return s_pc
 
@@ -113,9 +119,10 @@ class GridPooling(nn.Module):     #下
             self.act = act_layer()
 
     def forward(self, point: PointCloud):
-        grid_coord = point.grid_coord        
+        grid_coord = point.grid_coord       
         grid_coord = torch.div(grid_coord, self.stride, rounding_mode="trunc")
         #Start (TODO: 要理解这儿干了什么？)
+        # print(f"start- {grid_coord.shape}")
         grid_coord = grid_coord | point.batch.view(-1, 1) << 48    # 加上批号！
         grid_coord, cluster, counts = torch.unique(
             grid_coord,
@@ -125,6 +132,7 @@ class GridPooling(nn.Module):     #下
             dim=0,
         )
         grid_coord = grid_coord & ((1 << 48) - 1)                   # 去掉批号！
+        # print(f"end- {grid_coord.shape}")
         #End
         # indices of point sorted by cluster, for torch_scatter.segment_csr
         _, indices = torch.sort(cluster)
@@ -143,7 +151,6 @@ class GridPooling(nn.Module):     #下
             batch=point.batch[head_indices],
             order = point.order           # TODO: 这个地方有点隐蔽,必须穿进来的,必须有这个field!
         )
-
         if "name" in point.keys():
             point_dict["name"] = point.name
 
@@ -177,12 +184,12 @@ class GridUnpooling(nn.Module):
         self.proj = nn.Sequential(nn.Linear(in_channels, out_channels))
         self.proj_skip = nn.Sequential(nn.Linear(skip_channels, out_channels))
         #最后输出！
-        self.fuse_o = nn.Sequential(                                 #合并各排序的特征。
-            nn.Linear(out_channels * 2, out_channels),
-            nn.LayerNorm(out_channels),
-            nn.GELU(),                                               # TODO: 看看融合后，要不要激活函数
-            nn.Linear(out_channels, out_channels),                   # TODO:
-        )
+        # self.fuse_o = nn.Sequential(                                 #合并各排序的特征。
+        #     nn.Linear(out_channels * 2, out_channels),
+        #     nn.LayerNorm(out_channels),
+        #     nn.GELU(),                                               # TODO: 看看融合后，要不要激活函数
+        #     nn.Linear(out_channels, out_channels),                   # TODO:
+        # )
         #
         if norm_layer is not None:
             self.proj.add_module("norm_l", norm_layer(out_channels))
@@ -201,8 +208,8 @@ class GridUnpooling(nn.Module):
         feat = point.feat               # TODO: see see 这玩意有用吗？
         #
         parent.feat = self.proj_skip(parent.feat)                      # TODO: 
-        #parent.feat = parent.feat + self.proj(point.feat)[inverse]    # 注意这个 inverse！ 实现上采样！
-        parent.feat = self.fuse_o(torch.cat([parent.feat, self.proj(point.feat)[inverse]], dim=-1))
+        parent.feat = parent.feat + self.proj(point.feat)[inverse]    # 注意这个 inverse！ 实现上采样！
+        #parent.feat = self.fuse_o(torch.cat([parent.feat, self.proj(point.feat)[inverse]], dim=-1))
         parent.sparse_conv_feat = parent.sparse_conv_feat.replace_feature(parent.feat)
         
         if self.traceable:
@@ -300,12 +307,13 @@ class PointSIS_Feature_Extractor(nn.Module):
         self.num_group = config.num_group
         self.order = [config.order] if isinstance(config.order, str) else config.order
         self.shuffle_orders = config.shuffle_orders
+        self.num_feature_levels = config.num_feature_levels
         self.config = config
         self.feature_encoder = Feature_Encoder(config.in_channels, config.enc_channels[0])
         self.num_stages = len(config.enc_depths)
         # gather 操作用！
         self.gather_projs = nn.ModuleList()
-        for s in reversed(range(self.num_stages-1)):
+        for s in reversed(range(self.num_feature_levels)): # TODO: 2 是因为最下两层不需要gather！
             self.gather_projs.add_module(
                 name=f"gather_proj_{s}",
                 module=nn.Linear(config.dec_channels[s], config.d_model))
@@ -362,10 +370,8 @@ class PointSIS_Feature_Extractor(nn.Module):
             self.dec.add_module(f"dec_{s}", dec)
         #self.category = nn.Linear(config.d_cat, config.feature_dims)  # 输入的数据范畴,目前只有有上下之分！      
 
-    def transform(self, s_pc:PointCloud):
-        # TODO:: 这一段代码比较臭:原因在于什么样的输入特征及位置编码用作网络的输入,一直是被调整的对象！！
-        s_pc.feat = torch.cat([s_pc.coord, s_pc.feat], dim= -1)
-        
+    def transform(self, s_pc:PointCloud): #TODO: 这个地方才开始用到grid_size！
+        s_pc.feat = torch.cat([s_pc.coord, s_pc.feat], dim=-1)  # BG 7 #此处融入坐标！        
         s_pc.order = self.order
         s_pc.serialization(order=self.order, shuffle_orders=self.shuffle_orders)
         s_pc.sparsify()
@@ -375,7 +381,7 @@ class PointSIS_Feature_Extractor(nn.Module):
         #TODO: TOSEE 要搞明白 the data structure of s_pc
         pc = s_pc
         #定位
-        for _ in range(self.num_stages - 2):
+        for _ in range(self.num_feature_levels - 1): 
             pc = pc["unpooling_parent"]
         #收集特征，并统一纬度！
         feats = []
@@ -412,14 +418,18 @@ class PointSIS_Seg(nn.Module):
         super().__init__()
         self.pointsis_feature_extractor = PointSIS_Feature_Extractor(config)
         self.mask_decoder = MaskDecoder(config)
-        #
+        #{Query:
         self.num_queries = config.num_queries
-        self.query_embedder = nn.Embedding(config.num_queries, config.d_model)        # 可学习的查询！
-        self.query_position_embedder = nn.Embedding(config.num_queries, config.d_model)   # TODO：位置也是可学习的？？？ Mask2Former就是如此！！！
-        #TODO:
+        # 可学习的查询！
+        self.query_embedder = nn.Embedding(config.num_queries, config.d_model)
+        # TODO：位置也是可学习的？？？ Mask2Former就是如此！！！ 
+        self.query_position_embedder = nn.Embedding(config.num_queries, config.d_model)
+        #}
+        
+        #{融合prompt:
         self.merge_prompt = nn.Linear(config.d_model+1, config.d_model)
         self.merge_prompt_pos = nn.Linear(config.d_model+1, config.d_model)
-        #
+        #}
         self.class_predict = nn.Linear(config.d_model, config.num_labels+1)
         #        
         self.loss = PMLoss(config)
@@ -439,14 +449,16 @@ class PointSIS_Seg(nn.Module):
         query_embeddings = self.merge_prompt(torch.cat([query_embeddings, s_o_i], dim=-1))
         query_position_embeddings = self.merge_prompt_pos(torch.cat([query_position_embeddings, s_o_i], dim=-1))
         
-        # TODO:To be refactored！
-        point_embedding =  s_pc.feat[-1]    # # s_pc.feat 此时是收集起来的一个feat list!
-        encoder_hidden_states =  s_pc.feat[0:-1]  #config.num_feature_levels控制！ 其实就是主干网的那几层输出!
-        # TODO:有个问题,mask_decoder的参数point_embedding,encoder_hidden_states是否需要序列化?在Transformer机制下，可以先不考虑?作也容易！
+        # TODO:取名mask_features是为了和mask2former对应！但没有想通的问题是，s_pc.feat到底应该是什么结构！
+        mask_features =  s_pc.feat[-1]    # s_pc.feat 此时是收集起来的一个feat list!
+        encoder_hidden_states =  s_pc.feat[0:]  #config.num_feature_levels控制！ 其实就是主干网的那几层输出!
+        # TODO:有个问题,mask_features,encoder_hidden_states是否需要序列化?
+        # 在Transformer机制下，可以先不考虑?作也容易！
+        # 是否需要为他们添加位置编码?
         pred_mask, q = self.mask_decoder(                                   #       -> b q g , b q d
                             query_embeddings = query_embeddings,
                             query_position_embeddings = query_position_embeddings,
-                            point_embeddings = point_embedding,             #       编码主干网的最后一层输出！
+                            mask_features = mask_features,             #       编码主干网的最后一层输出！
                             encoder_hidden_states= encoder_hidden_states    #       编码主干网的下面几层的输出！
                         )
 
