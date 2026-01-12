@@ -11,27 +11,33 @@ from pm.pointmamba.conifuguration_point_sis import  PointSISConfig
 
 class MaskPredictor(nn.Module):
     """
-    实质上,预测一个attention mask！参看 Mask2Former！
+    实质上,预测一个attention mask！参看 Mask2Former和 Mask3D的论文！
     """
     def __init__(self, config:PointSISConfig):
         super().__init__()
         self.embed_dim = config.d_model
         self.nhead = config.nhead
+        self.num_classes = config.num_labels
+        self.predict_class = nn.Linear(self.embed_dim, self.num_classes+1)
         # TODO: 要还是不要?好像无差别！
-        # self.query_mlp = MLP(in_channels=self.embed_dim,
-        #                     out_channels=self.embed_dim, 
-        #                     hidden_channels=int(self.embed_dim *2))
-        #self.query_norm = nn.LayerNorm(self.embed_dim)           # TODO:为什么没有这个？ 看Transformer Decoder的结构！
+        self.predict_mask = MLP(in_channels=self.embed_dim,
+                            out_channels=self.embed_dim, 
+                            hidden_channels=int(self.embed_dim *2))
+        self.query_norm = nn.LayerNorm(self.embed_dim)           
 
     def forward(self, query:torch.Tensor, memory:torch.Tensor) -> Tuple[Tensor]:
-        #query_emb = self.query_mlp(query)              # self.query_norm(self.query_mlp(query))  # b q d -> b q d
+        query_output = self.query_norm(query)
+        predicted_classes = self.predict_class(query_output)    # b q d -> b q (num_classes+1)
+        
         # TODO: 据说einsum对jit不友好,...
-        predicated_mask = einsum(query, memory, "b q d, b g d -> b q g ")                # b q d , b g d -> b q g
+        # 注意predict_mask和predicted_mask的区别！
+        # predict_mask = self.predict_mask(query_output)        # b q d -> b q d
+        predicated_mask = einsum(self.predict_mask(query_output), memory, "b q d, b g d -> b q g ")                # b q d , b g d -> b q g
         attension_mask = predicated_mask.sigmoid().squeeze(1).repeat(1, self.nhead, 1, 1)   # b q g -> b h q g
         attension_mask = rearrange(attension_mask, " b h q g -> (b h) q g")          # 注意： torch.nn.MultiheadAttention的要求！！！ 原文实现用的是flatten(0,1) 
         attension_mask = (attension_mask < 0.5).bool()
         attension_mask = attension_mask.detach()                                     # no_grad! why?
-        return predicated_mask, attension_mask                                                      
+        return predicted_classes,predicated_mask, attension_mask                                                      
 
 class MaskedSelfAttention(nn.Module):     # 这个MaskedSelfAttention和一般的SelfAttention没有任何区别！
     def __init__(
@@ -207,7 +213,7 @@ class MaskDecoder(nn.Module):
         query_hidden_states = query_embeddings  # b q d                            # 作为decode_layer的输入！ 直接级联
 
         query_hidden_states = self.layernorm(query_embeddings)        # 作为MaskPredictor的第一次输入！须先normalize！
-        predicated_mask, attention_mask = self.mask_predictor(query_hidden_states, mask_features)
+        predicated_classes,predicated_mask, attention_mask = self.mask_predictor(query_hidden_states, mask_features)
         for idx, decoder_layer in enumerate(self.layers):
             level_index = idx % self.num_feature_levels
             attention_mask[torch.where(attention_mask.sum(-1) == attention_mask.shape[-1])] = False  # 避免什么？
@@ -221,7 +227,7 @@ class MaskDecoder(nn.Module):
                 #position_embeddings = ??,                   # TODO: 要考虑
                 attention_mask = attention_mask,
             )
-            predicated_mask, attention_mask = self.mask_predictor(query_hidden_states,mask_features)
+            predicated_classes, predicated_mask, attention_mask = self.mask_predictor(query_hidden_states,mask_features)
             
 
-        return predicated_mask, query_hidden_states
+        return predicated_mask, predicated_classes

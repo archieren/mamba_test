@@ -161,7 +161,7 @@ class PointSISConfig():
         order              = ["hilbert","hilbert-trans"] # ["z", "z-trans", "hilbert", "hilbert-trans"]# 
         shuffle_orders:bool=False
         mamba_config = asdict(Mamba1Config())
-        d_model:      int = 384       # feature_dim pos_dim d_model 是一样的!, 未将d_model放到mamba_config里！
+        d_model:      int = 96       # feature_dim pos_dim d_model 是一样的!, 未将d_model放到mamba_config里！
         # feature_dims: int = d_model
         # pos_dims:     int = d_model
         

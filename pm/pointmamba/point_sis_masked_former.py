@@ -183,17 +183,11 @@ class GridUnpooling(nn.Module):
         super().__init__()
         self.proj = nn.Sequential(nn.Linear(in_channels, out_channels))
         self.proj_skip = nn.Sequential(nn.Linear(skip_channels, out_channels))
-        #最后输出！
-        # self.fuse_o = nn.Sequential(                                 #合并各排序的特征。
-        #     nn.Linear(out_channels * 2, out_channels),
-        #     nn.LayerNorm(out_channels),
-        #     nn.GELU(),                                               # TODO: 看看融合后，要不要激活函数
-        #     nn.Linear(out_channels, out_channels),                   # TODO:
-        # )
-        #
+
         if norm_layer is not None:
             self.proj.add_module("norm_l", norm_layer(out_channels))
             self.proj_skip.add_module("norm_l", norm_layer(out_channels))
+
         if act_layer is not None:
             self.proj.add_module("act_l",act_layer())
             self.proj_skip.add_module("act_l",act_layer())
@@ -205,15 +199,12 @@ class GridUnpooling(nn.Module):
         assert "pooling_inverse" in point.keys()
         parent = point.pooling_parent   # pop("pooling_parent")
         inverse = point.pooling_inverse
-        feat = point.feat               # TODO: see see 这玩意有用吗？
         #
         parent.feat = self.proj_skip(parent.feat)                      # TODO: 
         parent.feat = parent.feat + self.proj(point.feat)[inverse]    # 注意这个 inverse！ 实现上采样！
-        #parent.feat = self.fuse_o(torch.cat([parent.feat, self.proj(point.feat)[inverse]], dim=-1))
         parent.sparse_conv_feat = parent.sparse_conv_feat.replace_feature(parent.feat)
         
         if self.traceable:
-            point.feat = feat
             parent["unpooling_parent"] = point
         return parent
 
@@ -260,12 +251,11 @@ class Stage(nn.Module):
                                           ]
                                         )                            #TODO:  各个次序对应一个!
         self.fuse_o = nn.Sequential(                                 #合并各排序的特征。
-            nn.Linear(feat_dim * (order_num + 1), feat_dim),         # TODO: +1 相当于搞了个残差？
-            nn.LayerNorm(feat_dim),
+            nn.Linear(feat_dim * (order_num + 0), feat_dim),         # TODO: 相当于一个加法平均？ +1 相当于搞了个残差？
+            # nn.LayerNorm(feat_dim),                                # TODO: 前面的Mixerlayer里已经有LayerNorm了，这里还要不要？
             nn.GELU(),                                               # TODO: 看看融合后，要不要激活函数
-            nn.Linear(feat_dim, feat_dim),                           # TODO:
+            # nn.Linear(feat_dim, feat_dim),                         # TODO:
         )
-        #self.norm_f = nn.LayerNorm(feat_dim)
 
     def scan(self, s_pc:PointCloud):
         s_order = s_pc.serialized_order   # o (b g)
@@ -278,7 +268,7 @@ class Stage(nn.Module):
         #将各排序拼接,走Mamba流程！
         
         output_gathered = []
-        output_gathered.append(hidden_state)
+        #output_gathered.append(hidden_state)
         for i in range(o_s):                     # 对每个排序， 走一趟mixer_layers
             seq_input   = torch_scatter.scatter(hidden_state,index=s_order[i], dim=0)  # 排序:    (b g) d, (b g) => (b g) d 
             seq_input = seq_input.unsqueeze(0)         # "(b g) d -> 1 (b g) d"
@@ -287,11 +277,11 @@ class Stage(nn.Module):
             seq_output  = torch_scatter.scatter(seq_output,index=s_inverse[i], dim=0)# 逆排序:   (b g) d, (b g) => (b g) d
             output_gathered.append(seq_output) # 
         
-        hidden_state = torch.cat(output_gathered, dim=-1) # [(b g) d, ...] => [(b g) (o_s d)]
-        hidden_state = self.fuse_o(hidden_state)         # FIXME:注意,hidden_state没有融合,这样似乎好点！！
-        
-        #short_cut!    # TODO: 看看有无必要？
-        s_pc.feat = hidden_state #self.norm_f(s_pc.feat + hidden_state)
+        hidden_state = torch.stack(output_gathered, dim=-1) # [(b g) d, ...] => [(b g) d o_s]
+        hidden_state = torch.sum(hidden_state, dim=-1) / o_s  # TODO: 这里相当于平均？ +1 是因为多了个残差？
+        #hidden_state = self.fuse_o(hidden_state)
+
+        s_pc.feat = hidden_state 
         s_pc.sparse_conv_feat = s_pc.sparse_conv_feat.replace_feature(s_pc.feat)
         return s_pc                       
     #   运用mamba的变长能力
@@ -380,7 +370,7 @@ class PointSIS_Feature_Extractor(nn.Module):
     def gather(self, s_pc:PointCloud, b_s:int):
         #TODO: TOSEE 要搞明白 the data structure of s_pc
         pc = s_pc
-        #定位
+        #定位,找到需要的
         for _ in range(self.num_feature_levels - 1): 
             pc = pc["unpooling_parent"]
         #收集特征，并统一纬度！
@@ -393,9 +383,10 @@ class PointSIS_Feature_Extractor(nn.Module):
                 feats[i] =  feats[i][inverse]
             pc = pc["pooling_parent"]
         feats.append(s_pc.feat)
+                
         for idx, module  in enumerate(self.gather_projs) :
             feats[idx] = rearrange(module(feats[idx]), "(b g) d -> b g d", b=b_s)
-        #
+        
         s_pc.feat = feats        
         return s_pc
             
@@ -430,7 +421,6 @@ class PointSIS_Seg(nn.Module):
         self.merge_prompt = nn.Linear(config.d_model+1, config.d_model)
         self.merge_prompt_pos = nn.Linear(config.d_model+1, config.d_model)
         #}
-        self.class_predict = nn.Linear(config.d_model, config.num_labels+1)
         #        
         self.loss = PMLoss(config)
 
@@ -455,14 +445,13 @@ class PointSIS_Seg(nn.Module):
         # TODO:有个问题,mask_features,encoder_hidden_states是否需要序列化?
         # 在Transformer机制下，可以先不考虑?作也容易！
         # 是否需要为他们添加位置编码?
-        pred_mask, q = self.mask_decoder(                                   #       -> b q g , b q d
+        pred_mask, pred_probs = self.mask_decoder(                                   #       -> b q g , b q d
                             query_embeddings = query_embeddings,
                             query_position_embeddings = query_position_embeddings,
                             mask_features = mask_features,             #       编码主干网的最后一层输出！
                             encoder_hidden_states= encoder_hidden_states    #       编码主干网的下面几层的输出！
                         )
 
-        pred_probs = self.class_predict(q)                             # b q d -> b q l      # l代表num_labels+1
         # TODO: pred_probs和 pred_mask 都无须activation！loss里面有！
         if "labels" in s_pc.keys():    # 如果有标签，就计算loss！！！
             labels = rearrange(s_pc.labels, "(b g) -> b g", b=b_s)
