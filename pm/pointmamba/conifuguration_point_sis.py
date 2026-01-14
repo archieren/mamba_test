@@ -183,6 +183,8 @@ class PointSISConfig():
         dec_depths  =   (3, 3, 3, 3)
         dec_channels=   (96, 96, 192, 384)    
         stride      =   (2,2,2,2)           # 这一块,可能需要仔细考虑！
+        use_interpolation=True              # 在解码器中使用插值上采样！
+        k:      int = 5                      #上采样用到的邻居个数！
 
         #out_indices       = [3, 7, 11]   # 弃用！
 
@@ -191,7 +193,7 @@ class PointSISConfig():
         #MaskDecoder!
         nhead:               int = 4
         dim_feedforward:     int = 2048
-        num_feature_levels:  int = 3       # len(enc_depths) - 2
+        num_feature_levels:  int = 2       # 
         num_decode_layers:   int = int(num_feature_levels*3)
         num_labels:          int =  TEETH.all_classes
         num_queries:         int = 64             

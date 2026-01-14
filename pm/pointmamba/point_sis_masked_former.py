@@ -141,10 +141,10 @@ class GridPooling(nn.Module):     #下
         # head_indices of each cluster, for reduce attr e.g. code, batch
         head_indices = indices[idx_ptr[:-1]]
         point_dict = Dict(
-            feat=torch_scatter.segment_csr(
+            feat=torch_scatter.segment_csr(  # 特征有个reduce！
                 self.proj(point.feat)[indices], idx_ptr, reduce=self.reduce
             ),
-            coord=torch_scatter.segment_csr(
+            coord=torch_scatter.segment_csr( # 坐标有个reduce！
                 point.coord[indices], idx_ptr, reduce="mean"
             ),
             grid_coord=grid_coord,
@@ -178,6 +178,8 @@ class GridUnpooling(nn.Module):
         out_channels,
         norm_layer=None,
         act_layer=None,
+        use_interpolation=True,
+        k=5,
         traceable=False,  # record parent and cluster
     ):
         super().__init__()
@@ -192,6 +194,9 @@ class GridUnpooling(nn.Module):
             self.proj.add_module("act_l",act_layer())
             self.proj_skip.add_module("act_l",act_layer())
 
+        if use_interpolation:
+            self.use_interpolation = use_interpolation
+            self.feature_propagation = FeatPropagation(group_size=k)
         self.traceable = traceable
 
     def forward(self, point):
@@ -200,8 +205,12 @@ class GridUnpooling(nn.Module):
         parent = point.pooling_parent   # pop("pooling_parent")
         inverse = point.pooling_inverse
         #
-        parent.feat = self.proj_skip(parent.feat)                      # TODO: 
-        parent.feat = parent.feat + self.proj(point.feat)[inverse]    # 注意这个 inverse！ 实现上采样！
+        parent.feat = self.proj_skip(parent.feat) 
+        if not self.use_interpolation:                      
+            parent.feat = parent.feat + self.proj(point.feat)[inverse]    # 注意这个 inverse！ 实现上采样！
+        else:
+            interpolated_feat = self.feature_propagation(parent, point) 
+            parent.feat = parent.feat + self.proj(interpolated_feat)
         parent.sparse_conv_feat = parent.sparse_conv_feat.replace_feature(parent.feat)
         
         if self.traceable:
@@ -306,7 +315,7 @@ class PointSIS_Feature_Extractor(nn.Module):
         for s in reversed(range(self.num_feature_levels)): # TODO: 2 是因为最下两层不需要gather！
             self.gather_projs.add_module(
                 name=f"gather_proj_{s}",
-                module=nn.Linear(config.dec_channels[s], config.d_model))
+                module=nn.Linear(config.dec_channels[s+1], config.d_model))
         #        
         self.enc = nn.Sequential()
         for s in range(self.num_stages):
@@ -345,6 +354,8 @@ class PointSIS_Feature_Extractor(nn.Module):
                     out_channels = dec_channels[s],
                     norm_layer=nn.LayerNorm,
                     act_layer=nn.GELU,
+                    use_interpolation=config.use_interpolation,
+                    k=config.k,
                     traceable=True,  # record parent and cluster
                 )
             )
@@ -358,7 +369,8 @@ class PointSIS_Feature_Extractor(nn.Module):
                 )                
             )
             self.dec.add_module(f"dec_{s}", dec)
-        #self.category = nn.Linear(config.d_cat, config.feature_dims)  # 输入的数据范畴,目前只有有上下之分！      
+        self.use_interpolation = config.use_interpolation
+        self.feature_propagation = FeatPropagation(group_size=config.k)      
 
     def transform(self, s_pc:PointCloud): #TODO: 这个地方才开始用到grid_size！
         s_pc.feat = torch.cat([s_pc.coord, s_pc.feat], dim=-1)  # BG 7 #此处融入坐标！        
@@ -370,23 +382,36 @@ class PointSIS_Feature_Extractor(nn.Module):
     def gather(self, s_pc:PointCloud, b_s:int):
         #TODO: TOSEE 要搞明白 the data structure of s_pc
         pc = s_pc
-        #定位,找到需要的
-        for _ in range(self.num_feature_levels - 1): 
+        #定位,找到需要的后代！
+        for _ in range(self.num_feature_levels): 
             pc = pc["unpooling_parent"]
         #收集特征，并统一纬度！
         feats = []
+        #-用inverse来上采样！
+        # while "pooling_parent" in pc.keys():
+        #     feat = pc.feat
+        #     inverse = pc.pooling_inverse
+        #     feats.append(feat)
+        #     for i in range(len(feats)):
+        #         feats[i] =  feats[i][inverse]
+        #     pc = pc["pooling_parent"]
+        #- 用featpropagation来上采样！
         while "pooling_parent" in pc.keys():
-            feat = pc.feat
-            inverse = pc.pooling_inverse
-            feats.append(feat)
-            for i in range(len(feats)):
-                feats[i] =  feats[i][inverse]
-            pc = pc["pooling_parent"]
-        feats.append(s_pc.feat)
+            if not self.use_interpolation:
+                feat = pc.feat
+                inverse = pc.pooling_inverse
+                feats.append(feat)
+                for i in range(len(feats)):
+                    feats[i] =  feats[i][inverse]
+            else:
+                feat = self.feature_propagation(s_pc, pc)  # 这里要理解s_pc是祖先
+                feats.append(feat)
+            pc = pc["pooling_parent"]     
                 
         for idx, module  in enumerate(self.gather_projs) :
             feats[idx] = rearrange(module(feats[idx]), "(b g) d -> b g d", b=b_s)
         
+        feats.append(rearrange(s_pc.feat, "(b g) d -> b g d", b=b_s))  # 最后的主干网输出！
         s_pc.feat = feats        
         return s_pc
             
@@ -441,7 +466,7 @@ class PointSIS_Seg(nn.Module):
         
         # TODO:取名mask_features是为了和mask2former对应！但没有想通的问题是，s_pc.feat到底应该是什么结构！
         mask_features =  s_pc.feat[-1]    # s_pc.feat 此时是收集起来的一个feat list!
-        encoder_hidden_states =  s_pc.feat[0:]  #config.num_feature_levels控制！ 其实就是主干网的那几层输出!
+        encoder_hidden_states =  s_pc.feat[0:-1]  #config.num_feature_levels控制！ 其实就是主干网的那几层输出!
         # TODO:有个问题,mask_features,encoder_hidden_states是否需要序列化?
         # 在Transformer机制下，可以先不考虑?作也容易！
         # 是否需要为他们添加位置编码?
