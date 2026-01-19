@@ -352,4 +352,605 @@ def forward(self, s_pc:PointCloud):
 - ✅ 只在边界点上计算损失
 - ✅ 可以集成到现有的 PMLoss 中
 
-需要我帮你集成到代码里吗？
+---
+
+# 点云聚集性损失（Clustering Loss）
+
+## 为什么需要聚集性损失？
+
+**边界损失**关注的是：
+- ✅ 不同实例之间的边界准确性
+- ✅ 边缘区域的分割质量
+
+**但边界损失无法解决**：
+- ❌ 同一实例内部的离散点（孤立点）
+- ❌ 实例内部的孔洞（不连续性）
+- ❌ 预测mask的空间连续性问题
+
+**聚集性损失**的作用：
+- 🎯 确保同一颗牙齿的点在3D空间中连续分布
+- 🎯 减少孤立噪声点
+- 🎯 提高形状完整性
+
+**两者互补，缺一不可！**
+
+---
+
+## 方案1：连通性损失（推荐）
+
+### 核心思想
+对于每个点，查看它的 k 个最近邻：
+- 如果当前点是前景（牙齿），那么它的邻居也应该倾向于前景
+- 鼓励邻近点有相似的预测，提高空间连续性
+
+### 代码实现
+
+```python
+def connectivity_loss(
+    pred_mask: torch.Tensor,      # (T, G) - 预测 mask（匹配后）
+    coords: torch.Tensor,         # (B*G, 3) - 点坐标
+    offset: torch.Tensor,         # (B,) - batch offset
+    k: int = 6,                   # KNN 邻居数
+    loss_weight: float = 0.5
+) -> torch.Tensor:
+    """
+    连通性损失：鼓励同一实例内的邻近点有相似的预测
+
+    核心思想：
+    - 对于每个点，查看它的 k 个最近邻
+    - 如果当前点是前景，邻居也应该倾向于前景
+    - 使用 MSE 惩罚不一致的预测
+    """
+    from pointops import knn_query as knn
+
+    T, G = pred_mask.shape
+    B = offset.size(0)
+
+    # 获取预测概率
+    pred_prob = torch.sigmoid(pred_mask)  # (T, G)
+
+    total_loss = 0.0
+    count = 0
+
+    # 对每个实例和每个 batch 处理
+    for t in range(T):
+        for b in range(B):
+            # 获取当前 batch 的坐标和预测
+            start_idx = offset[b] if b == 0 else 0
+            end_idx = offset[b] if b < B - 1 else G
+
+            batch_coords = coords[start_idx:end_idx]  # (G, 3)
+            batch_prob = pred_prob[t, start_idx:end_idx]  # (G,)
+
+            # KNN 查询
+            # 构造简单的 offset
+            batch_offset = torch.arange(1, device=coords.device)
+
+            neighbor_idx, _ = knn(
+                k, batch_coords,
+                batch_offset,
+                batch_coords,
+                batch_offset
+            )  # (G, k)
+
+            # 获取邻居的预测概率
+            neighbor_prob = batch_prob[neighbor_idx]  # (G, k)
+
+            # 计算每个点与其邻居预测的差异
+            current_prob_expanded = batch_prob.unsqueeze(1)  # (G, 1)
+
+            # MSE：希望当前点和邻居的预测一致
+            prob_diff = (current_prob_expanded - neighbor_prob) ** 2  # (G, k)
+            prob_diff = prob_diff.mean(dim=1)  # (G,)
+
+            # 只对前景区域（高置信度）计算
+            # 避免背景区域的干扰
+            foreground_mask = (batch_prob > 0.3)
+
+            if foreground_mask.sum() > 0:
+                loss = prob_diff[foreground_mask].mean()
+                total_loss += loss
+                count += 1
+
+    if count > 0:
+        return total_loss / count * loss_weight
+    else:
+        return torch.tensor(0.0, device=pred_mask.device)
+```
+
+---
+
+## 方案2：聚类损失（更简单）
+
+### 核心思想
+惩罚前景点的孤立性：
+- 对于每个前景点，计算它的 k 个邻居中有多少也是前景
+- 如果一个前景点的邻居都是背景，说明它是孤立的，应该惩罚
+
+### 代码实现
+
+```python
+def clustering_loss(
+    pred_mask: torch.Tensor,      # (T, G) - 预测 mask（匹配后）
+    coords: torch.Tensor,         # (B*G, 3) - 点坐标
+    offset: torch.Tensor,         # (B,) - batch offset
+    k: int = 6,
+    loss_weight: float = 0.5
+) -> torch.Tensor:
+    """
+    聚类损失：惩罚前景点的孤立性
+
+    核心思想：
+    - 对于每个前景点，计算它的 k 个邻居中有多少也是前景
+    - 如果前景点的邻居都是背景，说明它是孤立的，应该惩罚
+    """
+    from pointops import knn_query as knn
+
+    T, G = pred_mask.shape
+    B = offset.size(0)
+
+    pred_prob = torch.sigmoid(pred_mask)  # (T, G)
+    pred_binary = (pred_prob > 0.5).float()  # (T, G)
+
+    total_loss = 0.0
+    count = 0
+
+    for t in range(T):
+        for b in range(B):
+            start_idx = offset[b] if b == 0 else 0
+            end_idx = offset[b] if b < B - 1 else G
+
+            batch_coords = coords[start_idx:end_idx]  # (G, 3)
+            batch_binary = pred_binary[t, start_idx:end_idx]  # (G,)
+
+            # KNN 查询
+            batch_offset = torch.arange(1, device=coords.device)
+
+            neighbor_idx, _ = knn(
+                k, batch_coords,
+                batch_offset,
+                batch_coords,
+                batch_offset
+            )  # (G, k)
+
+            # 获取邻居的标签
+            neighbor_binary = batch_binary[neighbor_idx]  # (G, k)
+
+            # 对于每个前景点，计算邻居中前景的比例
+            current_binary = batch_binary.unsqueeze(1)  # (G, 1)
+
+            # 只对前景点计算
+            foreground_mask = (batch_binary == 1)
+
+            if foreground_mask.sum() > 0:
+                # 前景点的邻居中，前景的比例
+                # 取出所有前景点的邻居信息
+                foreground_neighbor_labels = neighbor_binary[foreground_mask]  # (N_fg, k)
+
+                # 计算每个前景点的邻居中前景的比例
+                foreground_ratio = foreground_neighbor_labels.float().mean(dim=1)  # (N_fg,)
+
+                # 如果比例低，说明前景点是孤立的，需要惩罚
+                # loss = 1 - ratio，比例越低，loss越高
+                loss = (1.0 - foreground_ratio).mean()
+
+                total_loss += loss
+                count += 1
+
+    if count > 0:
+        return total_loss / count * loss_weight
+    else:
+        return torch.tensor(0.0, device=pred_mask.device)
+```
+
+---
+
+## 方案3：组合损失（边界 + 聚集性）
+
+### 核心思想
+同时关注边界和内部完整性：
+- 边界损失：提高边界定位准确性
+- 聚集性损失：提高内部连续性
+
+### 代码实现
+
+```python
+def shape_consistency_loss(
+    pred_mask: torch.Tensor,
+    target_mask: torch.Tensor,
+    target_labels: torch.Tensor,
+    coords: torch.Tensor,
+    offset: torch.Tensor,
+    boundary_weight: float = 1.0,
+    clustering_weight: float = 0.5,
+    k: int = 6,
+    boundary_threshold: float = 0.7
+) -> torch.Tensor:
+    """
+    组合损失：边界损失 + 聚集性损失
+
+    Args:
+        pred_mask: 预测 mask (T, G)
+        target_mask: 真实 mask (T, G)
+        target_labels: 真实标签 (T, G)
+        coords: 点坐标 (B*G, 3)
+        offset: batch offset (B,)
+        boundary_weight: 边界损失权重
+        clustering_weight: 聚集性损失权重
+        k: KNN 邻居数
+        boundary_threshold: 边界判断阈值
+
+    Returns:
+        total_loss: 组合损失
+    """
+    # 1. 边界损失（关注边界）
+    loss_boundary = boundary_loss_simple(
+        pred_mask, target_mask, target_labels,
+        coords, offset,
+        k=k,
+        boundary_threshold=boundary_threshold,
+        loss_weight=1.0
+    )
+
+    # 2. 聚集性损失（关注内部）
+    loss_clustering = clustering_loss(
+        pred_mask, coords, offset,
+        k=k,
+        loss_weight=1.0
+    )
+
+    # 3. 组合
+    total_loss = loss_boundary * boundary_weight + loss_clustering * clustering_weight
+
+    return total_loss
+```
+
+---
+
+## 方案4：基于距离的加权聚集性损失（高级版）
+
+### 核心思想
+考虑邻居的距离信息：
+- 距离越近的邻居，权重应该越大
+- 使用高斯核函数加权距离
+
+### 代码实现
+
+```python
+def distance_weighted_clustering_loss(
+    pred_mask: torch.Tensor,      # (T, G)
+    coords: torch.Tensor,         # (B*G, 3)
+    offset: torch.Tensor,         # (B,)
+    k: int = 6,
+    sigma: float = 0.1,           # 高斯核的带宽
+    loss_weight: float = 0.5
+) -> torch.Tensor:
+    """
+    基于距离的加权聚集性损失
+
+    核心思想：
+    - 距离越近的邻居，影响应该越大
+    - 使用高斯核函数加权距离
+    """
+    from pointops import knn_query as knn
+
+    T, G = pred_mask.shape
+    B = offset.size(0)
+
+    pred_prob = torch.sigmoid(pred_mask)  # (T, G)
+
+    total_loss = 0.0
+    count = 0
+
+    for t in range(T):
+        for b in range(B):
+            start_idx = offset[b] if b == 0 else 0
+            end_idx = offset[b] if b < B - 1 else G
+
+            batch_coords = coords[start_idx:end_idx]  # (G, 3)
+            batch_prob = pred_prob[t, start_idx:end_idx]  # (G,)
+
+            # KNN 查询（获取距离）
+            batch_offset = torch.arange(1, device=coords.device)
+
+            neighbor_idx, distances = knn(
+                k, batch_coords,
+                batch_offset,
+                batch_coords,
+                batch_offset
+            )  # neighbor_idx: (G, k), distances: (G, k)
+
+            # 获取邻居的预测概率
+            neighbor_prob = batch_prob[neighbor_idx]  # (G, k)
+
+            # 当前点的预测
+            current_prob = batch_prob.unsqueeze(1)  # (G, 1)
+
+            # 计算预测差异
+            prob_diff = (current_prob - neighbor_prob) ** 2  # (G, k)
+
+            # 基于距离的权重：距离越近，权重越大
+            # 使用高斯核：weight = exp(-distance^2 / (2 * sigma^2))
+            weights = torch.exp(-distances ** 2 / (2 * sigma ** 2 + 1e-8))  # (G, k)
+
+            # 加权损失
+            weighted_loss = (prob_diff * weights).sum(dim=1) / (weights.sum(dim=1) + 1e-8)  # (G,)
+
+            # 只对前景区域计算
+            foreground_mask = (batch_prob > 0.3)
+
+            if foreground_mask.sum() > 0:
+                loss = weighted_loss[foreground_mask].mean()
+                total_loss += loss
+                count += 1
+
+    if count > 0:
+        return total_loss / count * loss_weight
+    else:
+        return torch.tensor(0.0, device=pred_mask.device)
+```
+
+---
+
+## 集成到 PMLoss 中
+
+### 完整的集成代码
+
+```python
+class PMLoss(nn.Module):
+    def __init__(self, config: PointSISConfig):
+        super().__init__()
+        # ... 现有代码 ...
+
+        # 边界损失配置
+        self.use_boundary_loss = getattr(config, 'use_boundary_loss', False)
+        self.boundary_weight = getattr(config, 'boundary_weight', 1.0)
+        self.boundary_k = getattr(config, 'boundary_k', 6)
+        self.boundary_threshold = getattr(config, 'boundary_threshold', 0.7)
+
+        # 聚集性损失配置（新增）
+        self.use_clustering_loss = getattr(config, 'use_clustering_loss', False)
+        self.clustering_weight = getattr(config, 'clustering_weight', 0.5)
+        self.clustering_k = getattr(config, 'clustering_k', 6)
+        self.clustering_type = getattr(config, 'clustering_type', 'connectivity')  # 'connectivity' or 'clustering'
+
+    def loss_masks(self,
+        masks_queries_logits: torch.Tensor,
+        mask_labels: List[torch.Tensor],
+        indices: Tuple[np.array],
+        num_masks: int,
+        shape_weight: torch.Tensor = None,
+        coords: torch.Tensor = None,
+        offset: torch.Tensor = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Compute the losses related to the masks"""
+        # ... 现有代码，获取 pred_masks 和 target_masks ...
+
+        losses = {
+            "loss_mask": sigmoid_cross_entropy_loss(pred_masks, target_masks, num_masks),
+            "loss_dice": dice_loss(pred_masks, target_masks, num_masks),
+            "loss_geo": geo_loss(pred_masks, target_masks, num_masks, target_shape_weight),
+        }
+
+        # 1. 添加边界损失
+        if self.use_boundary_loss and coords is not None and offset is not None:
+            target_labels_matched = torch.cat([
+                labels[target_indices]
+                for labels, (_, target_indices) in zip(class_labels, indices)
+            ])
+
+            losses["loss_boundary"] = boundary_loss_simple(
+                pred_masks,
+                target_masks,
+                target_labels_matched,
+                coords,
+                offset,
+                k=self.boundary_k,
+                boundary_threshold=self.boundary_threshold,
+                loss_weight=self.boundary_weight
+            )
+
+        # 2. 添加聚集性损失（新增）
+        if self.use_clustering_loss and coords is not None and offset is not None:
+            if self.clustering_type == 'connectivity':
+                losses["loss_clustering"] = connectivity_loss(
+                    pred_masks,
+                    coords,
+                    offset,
+                    k=self.clustering_k,
+                    loss_weight=self.clustering_weight
+                )
+            elif self.clustering_type == 'clustering':
+                losses["loss_clustering"] = clustering_loss(
+                    pred_masks,
+                    coords,
+                    offset,
+                    k=self.clustering_k,
+                    loss_weight=self.clustering_weight
+                )
+            elif self.clustering_type == 'distance_weighted':
+                losses["loss_clustering"] = distance_weighted_clustering_loss(
+                    pred_masks,
+                    coords,
+                    offset,
+                    k=self.clustering_k,
+                    sigma=0.1,
+                    loss_weight=self.clustering_weight
+                )
+
+        return losses
+
+    def forward(self,
+        masks_queries_logits: torch.Tensor,
+        class_queries_logits: torch.Tensor,
+        labels: torch.Tensor,
+        shape_weight: torch.Tensor = None,
+        coords: torch.Tensor = None,
+        offset: torch.Tensor = None,
+    ) -> Dict[str, torch.Tensor]:
+        # ... 现有代码 ...
+
+        losses = {
+            **self.loss_masks(
+                masks_queries_logits, mask_labels, indices, num_masks,
+                shape_weights, coords, offset
+            ),
+            **self.loss_labels(class_queries_logits, class_labels, indices),
+        }
+
+        return losses
+```
+
+---
+
+## 配置文件示例
+
+```yaml
+# 在 config.yaml 或 config.py 中添加
+
+# 边界损失配置
+use_boundary_loss: True
+boundary_weight: 1.0
+boundary_k: 6
+boundary_threshold: 0.7
+
+# 聚集性损失配置
+use_clustering_loss: True
+clustering_weight: 0.5  # 聚集性损失权重通常低于边界损失
+clustering_k: 6
+clustering_type: 'connectivity'  # 可选: 'connectivity', 'clustering', 'distance_weighted'
+```
+
+---
+
+## 实验策略
+
+### 阶段1：基线（无额外损失）
+```python
+config.use_boundary_loss = False
+config.use_clustering_loss = False
+```
+观察基线性能。
+
+### 阶段2：只加边界损失
+```python
+config.use_boundary_loss = True
+config.boundary_weight = 1.0
+config.use_clustering_loss = False
+```
+观察边界损失的效果。
+
+### 阶段3：边界 + 聚集性
+```python
+config.use_boundary_loss = True
+config.boundary_weight = 1.0
+config.use_clustering_loss = True
+config.clustering_weight = 0.5
+```
+观察组合效果。
+
+### 阶段4：调参
+```python
+# 调整聚集性损失权重
+config.clustering_weight = 0.3  # 如果过度平滑
+config.clustering_weight = 0.7  # 如果离散点仍然存在
+
+# 调整 KNN 邻居数
+config.clustering_k = 4  # 更局部
+config.clustering_k = 10  # 更全局
+
+# 尝试不同类型
+config.clustering_type = 'distance_weighted'  # 考虑距离权重
+```
+
+---
+
+## 参数调优建议
+
+### 1. 聚集性损失权重（clustering_weight）
+- **0.1 - 0.3**：轻微约束，适用于已经较好的结果
+- **0.5 - 0.7**：中等约束，推荐起始值
+- **1.0**：强约束，可能过度平滑
+
+### 2. KNN 邻居数（k）
+- **k=4**：关注非常局部的连续性
+- **k=6**：平衡，推荐值
+- **k=10**：考虑更大的邻域，更全局的连续性
+
+### 3. 聚集性损失类型选择
+| 类型 | 适用场景 | 计算开销 | 效果 |
+|------|---------|---------|------|
+| **connectivity** | 通用 | 中等 | 推荐 |
+| **clustering** | 离散点严重 | 低 | 简单 |
+| **distance_weighted** | 需要精细控制 | 高 | 最优 |
+
+---
+
+## 效果评估方法
+
+### 1. 定量评估
+```python
+# 计算以下指标
+- 孤立点数量：预测mask中，邻居都是背景的前景点数量
+- 连通区域数量：使用连通分量分析，数量越少越好
+- 平均孔洞面积：前景区域内的背景孔洞
+```
+
+### 2. 可视化检查
+```python
+# 可视化预测mask
+- 用不同颜色标注孤立点
+- 可视化孔洞区域
+- 对比使用聚集性损失前后的差异
+```
+
+---
+
+## 总结对比
+
+| 损失类型 | 关注点 | 解决的问题 | 推荐权重 |
+|---------|-------|-----------|---------|
+| **边界损失** | 边界区域 | 边界定位不准确 | 1.0 |
+| **聚集性损失** | 内部区域 | 离散点、孔洞 | 0.5 |
+| **Dice Loss** | 整体重叠度 | 整体分割不准确 | 1.0 |
+| **Cross Entropy** | 像素级分类 | 分类错误 | 1.0 |
+
+### 推荐配置
+```python
+# 保守配置（从这开始）
+use_boundary_loss = True
+boundary_weight = 1.0
+use_clustering_loss = True
+clustering_weight = 0.3
+clustering_type = 'connectivity'
+
+# 激进配置（如果离散点严重）
+use_boundary_loss = True
+boundary_weight = 1.0
+use_clustering_loss = True
+clustering_weight = 0.7
+clustering_type = 'clustering'
+```
+
+---
+
+## 注意事项
+
+1. **不要过度约束**：
+   - 聚集性损失权重过高可能导致过度平滑
+   - 牙齿的某些区域（如牙根分叉）本身就不是完全连通的
+
+2. **计算开销**：
+   - KNN 查询有额外计算开销
+   - 如果训练太慢，可以只在训练时使用，推理时不用
+
+3. **与现有损失的关系**：
+   - Dice loss 本身已经隐含了一些连续性约束
+   - 聚集性损失是对 Dice loss 的补充，而非替代
+
+4. **调试技巧**：
+   - 先在小的验证集上测试
+   - 可视化边界点和孤立点
+   - 逐步增加权重，观察效果
+
+需要我帮你把聚集性损失集成到代码里吗？

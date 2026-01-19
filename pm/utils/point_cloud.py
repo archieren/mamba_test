@@ -53,7 +53,7 @@ class PointCloud(Dict):
         Point Cloud Serialization
 
         relay on ["grid_coord" or "coord" + "grid_size", "batch", "feat"]
-        order指扫描的方式, 是{"z", "z-trans", "hilbert", "hilbert-trans"}的子集
+        order指扫描的方式, 是{"z", "z-trans", "z-reverse", "hilbert", "hilbert-trans", "hilbert-reverse"}的子集
         """
         assert self.batch is not None, "Batch cannot be none!"
         if "grid_coord" not in self.keys():
@@ -317,7 +317,7 @@ def __samples(parent_pc:PointCloud, s_idx:torch.Tensor, s_offset:torch.Tensor, g
     N = group_size
     #取得相邻n个点的坐标！                                                           
     s_n_idx, _dist = knn(N, parent_pc.coord, parent_pc.offset, s_xyz,s_offset)       # (b g) N,_ or n_1+n_2+...+n_b N, _
-    _grid_size_decision(parent_pc, s_offset, s_xyz)
+    ## _grid_size_decision(parent_pc, s_offset, s_xyz)
     s_n = parent_pc.coord[s_n_idx]                                                   # (b g) N 3 or n_1+n_2+...+n_b N 3 # 没特定feat时,用他
     # 这种搞法，类似梯度
     # s_n = s_n - s_xyz.unsqueeze(1)                                                         # (b g) N 3 or n_1+n_2+...+n_b N 3 

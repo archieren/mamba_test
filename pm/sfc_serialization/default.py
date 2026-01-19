@@ -1,4 +1,5 @@
 import torch
+import torch_scatter
 from .z_order import xyz2key as z_order_encode_
 from .z_order import key2xyz as z_order_decode_
 from .hilbert import encode as hilbert_encode_
@@ -7,20 +8,40 @@ from .hilbert import decode as hilbert_decode_
 
 @torch.inference_mode()
 def encode(grid_coord, batch=None, depth=16, order="z"):
-    assert order in {"z", "z-trans", "hilbert", "hilbert-trans"}
+    assert order in {"z", "z-trans", "z-reverse","hilbert", "hilbert-trans","hilbert-reverse"}
+    reverse = False
     if order == "z":
         code = z_order_encode(grid_coord, depth=depth)
     elif order == "z-trans":
         code = z_order_encode(grid_coord[:, [1, 0, 2]], depth=depth)
+    elif order == "z-reverse":
+        reverse = True
+        code = z_order_encode(grid_coord, depth=depth)
     elif order == "hilbert":
         code = hilbert_encode(grid_coord, depth=depth)
     elif order == "hilbert-trans":
         code = hilbert_encode(grid_coord[:, [1, 0, 2]], depth=depth)
+    elif order == "hilbert-reverse":
+        reverse = True
+        code = hilbert_encode(grid_coord, depth=depth)
     else:
         raise NotImplementedError
     if batch is not None:
         batch = batch.long()
+        #code = batch << depth * 3 | code
+        
+    if reverse:
+        if batch is not None:
+            b_s = batch[-1] + 1
+            max_per_batch = torch_scatter.scatter_max(code, batch, dim=0, dim_size=b_s)[0]
+            code = max_per_batch[batch] - code
+        else:
+            max_code = code.max()
+            code = max_code - code
+            
+    if batch is not None:
         code = batch << depth * 3 | code
+    
     return code
 
 

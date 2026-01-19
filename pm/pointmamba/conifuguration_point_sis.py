@@ -100,7 +100,7 @@ def tooth_lables(labels:torch.Tensor, shape_weight:torch.Tensor) -> List[torch.T
                 #
                 cls = TEETH.TEETH_num_cls[i]                 # 牙编号 -> Class!
                 class_labels.append(cls)
-                up_or_low="up" if i//10 in {1, 2, 5, 6} else "low"  # TODO:how? # FIXME:这里曾经出现过翻车性的Bug!  % -> //等等!!
+                up_or_low="up" if i//10 in {1, 2, 5, 6} else "low"  # TODO:how?
         #       
         # non_tooth_mask = torch.where(labels[b]>0, 0, 1).unsqueeze(0)             # 牙龈
         # if non_tooth_mask.sum()>0:
@@ -157,8 +157,8 @@ class PointSISConfig():
         in_channels:  int = 7    # 7: coord + normals + cur;  4: coord + normals;  3: coord only
         # About SFC
         #Spatial Filling Curve!
-        #{"z", "z-trans", "hilbert", "hilbert-trans"}
-        order              = ["hilbert","hilbert-trans"] # ["z", "z-trans", "hilbert", "hilbert-trans"]# 
+        #{"z", "z-trans", "z-reverse","hilbert", "hilbert-trans", "hilbert-reverse"}
+        order              = ["hilbert", "hilbert-reverse" ]  # "z", "z-reverse"
         shuffle_orders:bool=False
         mamba_config = asdict(Mamba1Config())
         d_model:      int = 96       # feature_dim pos_dim d_model 是一样的!, 未将d_model放到mamba_config里！
@@ -178,11 +178,13 @@ class PointSISConfig():
         group_size:   int = 11  # 邻居个数       
         #depth             = [2, 2, 2, 4, 2] # 每层的mamba堆叠深度！！！ 
         # TODO: 加了下采样后，加了一个Stage！
-        enc_depths  =   (3, 3, 3, 6, 3)
-        enc_channels=   (96, 96, 192, 384, 384)    
-        dec_depths  =   (3, 3, 3, 3)
-        dec_channels=   (96, 96, 192, 384)    
-        stride      =   (2,2,2,2)           # 这一块,可能需要仔细考虑！
+        enc_depths  =   (6, 3, 6, 3) #(3, 3, 3, 6, 3)
+        enc_channels=   (96, 96, 192, 384) #(96, 96, 192, 384, 384)
+        stride      =   (2,2,2)  # (2,2,2,2)         # 这一块,可能需要仔细考虑！
+        has_decoder: bool= True    
+        dec_depths  =   (3, 3, 3) #(3, 3, 3, 3)
+        dec_channels=   (96, 96, 192)  #(96, 96, 192, 384)  
+
         use_interpolation=True              # 在解码器中使用插值上采样！
         k:      int = 5                      #上采样用到的邻居个数！
 
@@ -193,7 +195,7 @@ class PointSISConfig():
         #MaskDecoder!
         nhead:               int = 4
         dim_feedforward:     int = 2048
-        num_feature_levels:  int = 2       # 
+        num_feature_levels:  int = len(enc_depths) - 1       # 
         num_decode_layers:   int = int(num_feature_levels*3)
         num_labels:          int =  TEETH.all_classes
         num_queries:         int = 64             
@@ -202,7 +204,7 @@ class PointSISConfig():
         class_weight:        float = 2.0
         mask_weight:         float = 5.0
         dice_weight:         float = 5.0
-        no_object_weight:    float = 0.1            
+        no_object_weight:    float = 0.2     # 0.1 是原始值！            
         # Prompting
 
 def make_default_config():

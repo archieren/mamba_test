@@ -270,16 +270,13 @@ def geo_loss(inputs: torch.Tensor,
     Returns:
         `torch.Tensor`: The computed loss.    
     """
-    # TODO:妈的，先这样，不知对不对！ 按照论文来写的！    
+    # Binary Cross Entropy Loss
+    ce_loss = F.binary_cross_entropy_with_logits(inputs, labels, reduction="none") # 在mask内，实质上作的是二分类！ ce_loss == -log(p_t)    
+    # Geometric Focal Loss
     p = torch.sigmoid(inputs)
-    ce_loss = F.binary_cross_entropy_with_logits(inputs, labels, reduction="none") # 在mask内，实质上作的是二分类！ ce_loss == -log(p_t)
- 
-    p_t = p * labels + (1 - p) * (1 - labels)     # labels * (1 - lbaels) == 0
-    loss = ce_loss * ((1 - p_t) ** gamma)          # loss == -log(p_t)*((1 - p_t) ** gamma)
-
-    # if alpha >= 0:
-    #     alpha_t = alpha * labels + (1 - alpha) * (1 - labels)
-    #     loss = alpha_t * loss
+    p_t = p * labels + (1 - p) * (1 - labels)      #
+    loss = ce_loss * ((1 - p_t) ** gamma)          # 
+    # Shape-aware Weighting the Focal Loss: 强迫权重高的位置的focal loss成为关注点！
     s_r_t =  target_shape_weight       # TODO:想明白！ 只考虑显著点的loss
     loss = s_r_t * loss
 
@@ -409,7 +406,6 @@ class PMLoss(nn.Module):
         self.eos_coef = config.no_object_weight
         empty_weight = torch.ones(self.num_labels + 1)
         empty_weight[0] = self.eos_coef                    # TODO: 到底是0,还是-1.
-        #empty_weight[-1] = self.eos_coef
         self.register_buffer("empty_weight", empty_weight)
 
 
@@ -425,6 +421,11 @@ class PMLoss(nn.Module):
                     indices: Tuple[np.array],         # [(t_0, t_0),...]  len_of_list: b
                     ) -> Dict[str, Tensor]: 
         """Compute the losses related to the labels using cross entropy.
+        Arguments:
+            class_queries_logits: Tensor,     # b q l
+            class_labels: List[Tensor],       # [t_0, t_1, ...]       len_of_list: b
+            indices: Tuple[np.array],         # [(t_0, t_0), (t_1, t_1), ...]  len_of_list: b 
+            其中：t_i 是第i个batch中,标注目标的个数，或是被选中的预测目标的个数，他们二者应当相等！       
         Returns:
             `Dict[str, Tensor]`: A dict of `torch.Tensor` containing the following key:
             - **loss_cross_entropy** -- The loss computed using cross entropy on the predicted and ground truth labels.
@@ -433,7 +434,8 @@ class PMLoss(nn.Module):
         batch_size, num_queries, _ = pred_logits.shape
         criterion = nn.CrossEntropyLoss(weight=self.empty_weight)
         # 下面这段,要注意各种索引技巧！！！
-        # idx==(batch_indices, prediction_indices), shape为(t_0+t_1+...+t_(b-1), t_0+t_1+...+t_(b-1)).索引出了t_0+t_1+...+t_(b-1)个位置！
+        # idx==(target_indices, prediction_indices), 
+        # shape为(t_0+t_1+...+t_(b-1), t_0+t_1+...+t_(b-1)).索引出了t_0+t_1+...+t_(b-1)个位置！
         idx = self._get_predictions_permutation_indices(indices) 
         target_classes_o = torch.cat([target[indices_tgt] for target, (_, indices_tgt) in zip(class_labels, indices)])  #  -> t_0+t_1+...+t_(b-1)
         # TODO: fill_value是0还是self.num_labels!
@@ -463,18 +465,30 @@ class PMLoss(nn.Module):
               masks.
             - **loss_dice** -- The loss computed using dice loss on the predicted on the predicted and ground truth,
               masks.
-        """
+        """          
+        # 1.获取匹配的预测
         # src_idx==(batch_indices, prediction_indices), shape为(t_0+t_1+...+t_(b-1), t_0+t_1+...+t_(b-1)).索引出了t_0+t_1+...+t_(b-1)个位置！
         src_idx = self._get_predictions_permutation_indices(indices)
         pred_masks = masks_queries_logits[src_idx]  # b q g ->(t_0+t_1+...+t_(b-1), g)
+        # 2.获取匹配的目标
         # tgt_idx==(batch_indices, target_indices), shape为(t_0+t_1+...+t_(b-1), t_0+t_1+...+t_(b-1)).索引出了t_0+t_1+...+t_(b-1)个位置！
         # tgt_idx = self._get_targets_permutation_indices(indices)  # TODO:要想明白tgt_idx为什么没用?因为mask_labels在batch维,是个列表！
         # target_masks = mask_labels[tgt_idx]                       # TODO:想想！ 为什么要按列表来处理了！
         target_masks = torch.cat([target[target_indices] for target, (_, target_indices) in zip(mask_labels, indices)])
-        #
-        target_shape_weight = torch.cat([target[target_indices] for target, (_, target_indices) in zip(shape_weight, indices)]) 
+        target_shape_weight = torch.cat([target[target_indices] for target, (_, target_indices) in zip(shape_weight, indices)])
+        
+        # 3.计算未匹配query的掩码损失
+        un_pred_masks = masks_queries_logits.clone()   # b q g
+        un_pred_masks[src_idx] = torch.finfo().min    # 将匹配上的掩码,置为一个极小值！
+         # 计算损失：鼓励输出负logits（sigmoid后接近0）
+        #loss_unmatched = F.relu( un_pred_masks + 1.0).mean()  # 惩罚大于-1的logits
+        # 或使用交叉熵
+        zero_target = torch.zeros_like(un_pred_masks)
+        loss_unmatched = F.binary_cross_entropy_with_logits(un_pred_masks, zero_target)
+             
         losses = {
             "loss_mask" : sigmoid_cross_entropy_loss(pred_masks, target_masks, num_masks),
+            "loss_unmatched": loss_unmatched * 0.3,
             "loss_dice" : dice_loss(pred_masks, target_masks, num_masks),
             "loss_geo": geo_loss(pred_masks,target_masks,num_masks, target_shape_weight),
         }

@@ -109,7 +109,7 @@ def read_result(pc:PointCloud, threshold:float):
         for j in range(len(indices)):
             if values[j] < 33:
                 t_num = TEETH.TEETH_cls_num[values[j]]
-                print(t_num)
+                # print(t_num)
                 (one_teeth_seg,)= np.where(feat[:, indices[j]] > threshold)
                 seg_result[f'{t_num}'] = one_teeth_seg.tolist()
 

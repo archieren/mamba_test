@@ -23,20 +23,6 @@ from pm.utils.point_cloud import PointCloud, Grouper_By_NumGroup,FeatPropagation
 #很拙劣的东西。如果能好的话,这些代码优化!
 INITIAL_FEATURE_DIMS = 4      # 在目前的构造中 是 3维的norms+1维的那个特殊的曲率！
 
-# class Shape_Encoder(nn.Module):
-#     """形状编码
-#     参考来源
-#         3DShape2VecSet - A 3D Shape Representation for Neural Fields and Generative Diffusion Models
-#     准备用形状描述，来构造某种相对位置编码！
-#     """
-#     def __init__(self, config:PointSISConfig):
-#         super().__init__()
-#         self.cross_attn = nn.MultiheadAttention(self.embed_dim, config.nhead, config.dropout, batch_first=True)
-#         self.cross_attn_layer_norm = nn.LayerNorm(self.embed_dim)    
-#     def forward(self, s_pc:PointCloud):
-
-#         return
-
 class Feature_Encoder(nn.Module):
     """
     特征编码，直接用MLP来处理！
@@ -95,7 +81,7 @@ class GridPooling(nn.Module):     #下
         stride=2,
         norm_layer=None,
         act_layer=None,
-        reduce="max",
+        reduce="mean",
         shuffle_orders=False,
         traceable=True,  # record parent and cluster
     ):
@@ -123,6 +109,8 @@ class GridPooling(nn.Module):     #下
         grid_coord = torch.div(grid_coord, self.stride, rounding_mode="trunc")
         #Start (TODO: 要理解这儿干了什么？)
         # print(f"start- {grid_coord.shape}")
+        # if "pooling_parent" in point.keys():
+        #     print("has pooling_parent")
         grid_coord = grid_coord | point.batch.view(-1, 1) << 48    # 加上批号！
         grid_coord, cluster, counts = torch.unique(
             grid_coord,
@@ -255,10 +243,12 @@ class Stage(nn.Module):
     def __init__(self, feat_dim, depth, order_num, mamba_config):
         super().__init__()
         self.cpe = CPE(feat_dim, feat_dim)
-        self.mixer_layers = nn.ModuleList([MixerLayers(d_model=feat_dim, depth= depth, mamba_config=mamba_config)
-                                          for _ in range(order_num)
-                                          ]
-                                        )                            #TODO:  各个次序对应一个!
+        # 如果一个次序，一个分支的话，就这样写！
+        # self.mixer_layers = nn.ModuleList([MixerLayers(d_model=feat_dim, depth= depth, mamba_config=mamba_config)
+        #                                   for _ in range(order_num)
+        #                                   ]
+        #                                 ) 
+        self.mixer_layers = MixerLayers(d_model=feat_dim, depth= depth, mamba_config=mamba_config)                          
         self.fuse_o = nn.Sequential(                                 #合并各排序的特征。
             nn.Linear(feat_dim * (order_num + 0), feat_dim),         # TODO: 相当于一个加法平均？ +1 相当于搞了个残差？
             # nn.LayerNorm(feat_dim),                                # TODO: 前面的Mixerlayer里已经有LayerNorm了，这里还要不要？
@@ -281,7 +271,9 @@ class Stage(nn.Module):
         for i in range(o_s):                     # 对每个排序， 走一趟mixer_layers
             seq_input   = torch_scatter.scatter(hidden_state,index=s_order[i], dim=0)  # 排序:    (b g) d, (b g) => (b g) d 
             seq_input = seq_input.unsqueeze(0)         # "(b g) d -> 1 (b g) d"
-            seq_output  = self.mixer_layers[i](seq_input, seq_idx = seq_idx)  # TODO: 思考一下,共用一个是否合适？
+            # 一个次序，一个分支的话，就这样写！
+            #seq_output  = self.mixer_layers[i](seq_input, seq_idx = seq_idx)
+            seq_output  = self.mixer_layers(seq_input, seq_idx = seq_idx)
             seq_output = seq_output.squeeze(0)     #  "1 (b g) d -> (b g) d"
             seq_output  = torch_scatter.scatter(seq_output,index=s_inverse[i], dim=0)# 逆排序:   (b g) d, (b g) => (b g) d
             output_gathered.append(seq_output) # 
@@ -306,17 +298,11 @@ class PointSIS_Feature_Extractor(nn.Module):
         self.num_group = config.num_group
         self.order = [config.order] if isinstance(config.order, str) else config.order
         self.shuffle_orders = config.shuffle_orders
-        self.num_feature_levels = config.num_feature_levels
+        self.num_feature_levels = config.num_feature_levels  # len(enc_depths) - 1
         self.config = config
         self.feature_encoder = Feature_Encoder(config.in_channels, config.enc_channels[0])
         self.num_stages = len(config.enc_depths)
-        # gather 操作用！
-        self.gather_projs = nn.ModuleList()
-        for s in reversed(range(self.num_feature_levels)): # TODO: 2 是因为最下两层不需要gather！
-            self.gather_projs.add_module(
-                name=f"gather_proj_{s}",
-                module=nn.Linear(config.dec_channels[s+1], config.d_model))
-        #        
+        self.has_decoder = config.has_decoder
         self.enc = nn.Sequential()
         for s in range(self.num_stages):
             enc = nn.Sequential()
@@ -324,11 +310,11 @@ class PointSIS_Feature_Extractor(nn.Module):
                 enc.add_module(
                     name= f"down_{s}",
                     module= GridPooling(
-                        in_channels = config.enc_channels[s-1],
-                        out_channels=config.enc_channels[s],
-                        stride      =      config.stride[s-1],
-                        norm_layer  =nn.LayerNorm,
-                        act_layer   =nn.GELU,                    
+                        in_channels =   config.enc_channels[s-1],
+                        out_channels=   config.enc_channels[s],
+                        stride      =   config.stride[s-1],
+                        norm_layer  =   nn.LayerNorm,
+                        act_layer   =   nn.GELU,                    
                     )
                 )
             enc.add_module(
@@ -341,34 +327,44 @@ class PointSIS_Feature_Extractor(nn.Module):
                 )
             )
             self.enc.add_module(f"enc_{s}",enc)        
-        
-        self.dec = nn.Sequential()
-        dec_channels = list(config.dec_channels) + [config.enc_channels[-1]]  # TODO:
-        for s in reversed(range(self.num_stages-1)):
-            dec = nn.Sequential()
-            dec.add_module(
-                name= f"up_{s}",
-                module = GridUnpooling(
-                    in_channels = dec_channels[s+1] ,
-                    skip_channels = config.enc_channels[s],
-                    out_channels = dec_channels[s],
-                    norm_layer=nn.LayerNorm,
-                    act_layer=nn.GELU,
-                    use_interpolation=config.use_interpolation,
-                    k=config.k,
-                    traceable=True,  # record parent and cluster
+
+        # 解码器通道数列表，要加上最后一个编码器输出！ TODO: 即使没有解码器，gather也要用到这个列表！
+        dec_channels = config.dec_channels + (config.enc_channels[-1],)          
+        if self.has_decoder:
+            self.dec = nn.Sequential()
+            for s in reversed(range(self.num_feature_levels)):
+                dec = nn.Sequential()
+                dec.add_module(
+                    name= f"up_{s}",
+                    module = GridUnpooling(
+                        in_channels = dec_channels[s+1] ,
+                        skip_channels = config.enc_channels[s],
+                        out_channels = dec_channels[s],
+                        norm_layer=nn.LayerNorm,
+                        act_layer=nn.GELU,
+                        use_interpolation=config.use_interpolation,
+                        k=config.k,
+                        traceable=True,  # record parent and cluster
+                    )
                 )
-            )
-            dec.add_module(
-                name = f"dec_stage_{s}",
-                module = Stage(
-                    feat_dim=dec_channels[s], #config.d_model,
-                    depth= config.dec_depths[s],
-                    order_num=len(config.order), 
-                    mamba_config=config.mamba_config                        
-                )                
-            )
-            self.dec.add_module(f"dec_{s}", dec)
+                dec.add_module(
+                    name = f"dec_stage_{s}",
+                    module = Stage(
+                        feat_dim=dec_channels[s], #config.d_model,
+                        depth= config.dec_depths[s],
+                        order_num=len(config.order), 
+                        mamba_config=config.mamba_config                        
+                    )                
+                )
+                self.dec.add_module(f"dec_{s}", dec)
+            
+        # gather 操作用！
+        self.gather_projs = nn.ModuleList()
+        for s in reversed(range(self.num_feature_levels)): # 
+            self.gather_projs.add_module(
+                name=f"gather_proj_{s}",
+                module=nn.Linear(dec_channels[s+1], config.d_model))
+        # 
         self.use_interpolation = config.use_interpolation
         self.feature_propagation = FeatPropagation(group_size=config.k)      
 
@@ -379,23 +375,55 @@ class PointSIS_Feature_Extractor(nn.Module):
         s_pc.sparsify()
         return s_pc
     
-    def gather(self, s_pc:PointCloud, b_s:int):
-        #TODO: TOSEE 要搞明白 the data structure of s_pc
+    def gather_enc(self, s_pc:PointCloud, b_s:int):
+        """如果骨干网只有编码器的部分，收集编码器的多层输出！
+        Args:
+            s_pc (PointCloud): 应当是解码器输出最后一层的特征输出！
+            b_s (int): _description_
+
+        Returns:
+            s_pc (PointCloud): s_pc的feat被修改为编码器的多层输出！
+        """
+        r_pc = s_pc
+        while "pooling_parent" in r_pc.keys():  # 找到encode_stage_0的输出!没有pooling_parent的就是!
+            r_pc = r_pc["pooling_parent"]
+        
+        t_pc = s_pc  # 
+        feats = []  
+        while "pooling_parent" in t_pc.keys():
+            if not self.use_interpolation:
+                feat = t_pc.feat
+                inverse = t_pc.pooling_inverse
+                feats.append(feat)
+                for i in range(len(feats)):
+                    feats[i] =  feats[i][inverse]
+            else:
+                feat = self.feature_propagation(r_pc, t_pc)  # 这里要理解s_pc是祖先
+                feats.append(feat)
+            t_pc = t_pc["pooling_parent"]    
+                
+        for idx, module  in enumerate(self.gather_projs) :
+            feats[idx] = rearrange(module(feats[idx]), "(b g) d -> b g d", b=b_s)
+        
+        feats.append(rearrange(r_pc.feat, "(b g) d -> b g d", b=b_s))  # 最后的主干网输出！
+        r_pc.feat = feats        
+        return r_pc
+    
+    def gather_dec(self, s_pc:PointCloud, b_s:int):
+        """如果骨干网有解码器的部分，收集解码器的多层输出！
+        Args:
+            s_pc (PointCloud): #TODO: TOSEE 要搞明白 the data structure of s_pc
+            b_s (int): _description_
+
+        Returns:
+            s_pc (PointCloud): s_pc的feat被修改为解码器的多层输出！
+        """
         pc = s_pc
         #定位,找到需要的后代！
         for _ in range(self.num_feature_levels): 
             pc = pc["unpooling_parent"]
         #收集特征，并统一纬度！
         feats = []
-        #-用inverse来上采样！
-        # while "pooling_parent" in pc.keys():
-        #     feat = pc.feat
-        #     inverse = pc.pooling_inverse
-        #     feats.append(feat)
-        #     for i in range(len(feats)):
-        #         feats[i] =  feats[i][inverse]
-        #     pc = pc["pooling_parent"]
-        #- 用featpropagation来上采样！
         while "pooling_parent" in pc.keys():
             if not self.use_interpolation:
                 feat = pc.feat
@@ -421,9 +449,12 @@ class PointSIS_Feature_Extractor(nn.Module):
         s_pc = self.feature_encoder(s_pc)              # => (b g) d 
 
         s_pc = self.enc(s_pc)
-        s_pc = self.dec(s_pc)
-        #TODO: 收集
-        s_pc = self.gather(s_pc, b_s)
+        if self.has_decoder :
+            s_pc = self.dec(s_pc)
+            #TODO: 收集
+            s_pc = self.gather_dec(s_pc, b_s)
+        else:
+            s_pc = self.gather_enc(s_pc, b_s)
         return s_pc
     
 class PointSIS_Seg(nn.Module):
