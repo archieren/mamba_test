@@ -7,7 +7,7 @@ from einops import rearrange,einsum
 from typing import Optional, Tuple
 from .mlp import MLP
 
-from pm.pointmamba.conifuguration_point_sis import  PointSISConfig
+from pm.pointmamba.configuration_point_sis import  PointSISConfig
 
 class MaskPredictor(nn.Module):
     """
@@ -113,28 +113,29 @@ class MaskedSelfAttention(nn.Module):     # 这个MaskedSelfAttention和一般�
         return attn_output
 
 class MaskedAttentionDecoderLayer(nn.Module):
-    def __init__(self, config:PointSISConfig) -> None:
+    def __init__(self, config:PointSISConfig, only_cross_attn=False) -> None:
         super().__init__()
+        self.only_cross_attn = only_cross_attn
         self.embed_dim = config.d_model
+        self.dropout = config.dropout
         #
         self.cross_attn = nn.MultiheadAttention(self.embed_dim, config.nhead, config.dropout, batch_first=True)
         self.cross_attn_layer_norm = nn.LayerNorm(self.embed_dim)
         #
-        self.self_attn = MaskedSelfAttention(  # TODO: 实质上 attebtion_mask 没有用！
-            embed_dim=self.embed_dim,
-            num_heads=config.nhead,
-            dropout=config.dropout,
-        )
-        self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
+        if not self.only_cross_attn:
+            self.self_attn = MaskedSelfAttention(  # TODO: 实质上 attention_mask 没有用！
+                embed_dim=self.embed_dim,
+                num_heads=config.nhead,
+                dropout=config.dropout,
+            )
+            self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
 
-        self.dropout = config.dropout
-        self.activation_dropout = config.dropout
-        self.activation_fn = nn.ReLU()                   # Mask2Former里的缺省设置，可以，TODO：改成可配置的
-
-
-        self.fc1 = nn.Linear(self.embed_dim, config.dim_feedforward)
-        self.fc2 = nn.Linear(config.dim_feedforward, self.embed_dim)
-        self.final_layer_norm = nn.LayerNorm(self.embed_dim)
+            #ffn
+            self.activation_dropout = config.dropout
+            self.activation_fn = nn.ReLU()                   # Mask2Former里的缺省设置，可以，TODO：改成可配置的
+            self.fc1 = nn.Linear(self.embed_dim, config.dim_feedforward)
+            self.fc2 = nn.Linear(config.dim_feedforward, self.embed_dim)
+            self.final_layer_norm = nn.LayerNorm(self.embed_dim)
 
     def with_pos_embed(self, tensor: torch.Tensor, position_embeddings: Optional[Tensor]):
         return tensor if position_embeddings is None else tensor + position_embeddings
@@ -162,24 +163,25 @@ class MaskedAttentionDecoderLayer(nn.Module):
         query = nn.functional.dropout(query, p=self.dropout, training=self.training)
         query = residual + query
         query = self.cross_attn_layer_norm(query)
-        # Self Attention Block
-        residual = query
-        query = self.self_attn(                            # 
-            hidden_states=query,
-            position_embeddings=query_position_embeddings,
-            attention_mask=None,
-        )
-        query = nn.functional.dropout(query, p=self.dropout, training=self.training)
-        query = residual + query
-        query = self.self_attn_layer_norm(query)
-        # Fully Connected
-        residual = query
-        query = self.activation_fn(self.fc1(query))
-        query = nn.functional.dropout(query, p=self.activation_dropout, training=self.training)
-        query = self.fc2(query)
-        query = nn.functional.dropout(query, p=self.dropout, training=self.training)
-        query = residual + query
-        query = self.final_layer_norm(query)
+        if not self.only_cross_attn:
+            # Self Attention Block
+            residual = query
+            query = self.self_attn(                            # 
+                hidden_states=query,
+                position_embeddings=query_position_embeddings,
+                attention_mask=None,
+            )
+            query = nn.functional.dropout(query, p=self.dropout, training=self.training)
+            query = residual + query
+            query = self.self_attn_layer_norm(query)
+            # Fully Connected
+            residual = query
+            query = self.activation_fn(self.fc1(query))
+            query = nn.functional.dropout(query, p=self.activation_dropout, training=self.training)
+            query = self.fc2(query)
+            query = nn.functional.dropout(query, p=self.dropout, training=self.training)
+            query = residual + query
+            query = self.final_layer_norm(query)
 
         return query
 

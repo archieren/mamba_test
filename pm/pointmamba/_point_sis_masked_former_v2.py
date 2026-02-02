@@ -15,12 +15,14 @@ from mamba_ssm.modules.mamba2 import Mamba2 as Mamba
 
 from pm.pointmamba.configuration_point_sis import Mamba1Config, PointSISConfig
 from pm.pointmamba.losses import PMLoss
-from pm.pointmamba.pointmask import MaskDecoder, MaskedAttentionDecoderLayer, MaskPredictor
+from pm.pointmamba.pointmask import MaskDecoder, MaskedAttentionDecoderLayer
 
 from pm.utils.point_cloud import FeatPropagation, Grouper_By_NumGroup, PointCloud
 from pointops import farthest_point_sampling as fps
 
-"""_这里准备尝试Dynamic Perceiver思路
+"""_这里准备尝试从点云中直接采样出Query_
+前面的尝试中，发现几个问题:
+1) 序列化方式对下、上采样，其实是不友好的。尤其在这种稀疏数据的情况下。本质上，Toplogy和Geometry是两码事了！
 """
 
 
@@ -125,16 +127,17 @@ class MixerLayers(nn.Module):
 
 class Stage(nn.Module):
     """ """
-    def __init__(self, config:PointSISConfig, stage_num: int) :#feat_dim, depth, order_num, mamba_config):
+
+    def __init__(self, feat_dim, depth, order_num, mamba_config):
         super().__init__()
-        #
-        feat_dim=config.enc_channels[stage_num]
-        depth=config.enc_depths[stage_num]
-        order_num=len(config.order)
-        
         self.cpe = CPE(feat_dim, feat_dim)
+        # 如果一个次序，一个分支的话，就这样写！
+        # self.mixer_layers = nn.ModuleList([MixerLayers(d_model=feat_dim, depth= depth, mamba_config=mamba_config)  # noqa: E501
+        #                                   for _ in range(order_num)
+        #                                   ]
+        #                                 )
         self.mixer_layers = MixerLayers(
-            d_model=feat_dim, depth=depth, mamba_config=config.mamba_config
+            d_model=feat_dim, depth=depth, mamba_config=mamba_config
         )
         self.fuse_o = nn.Sequential(  # 合并各排序的特征。
             nn.Linear(
@@ -144,9 +147,7 @@ class Stage(nn.Module):
             nn.GELU(),  # TODO: 看看融合后，要不要激活函数
             # nn.Linear(feat_dim, feat_dim),                         # TODO:
         )
-        
-        self.cloud_cross_query = MaskedAttentionDecoderLayer(config)
-        self.query_cross_cloud = MaskedAttentionDecoderLayer(config,only_cross_attn=True)
+
     def scan(self, s_pc: PointCloud):
         s_order = s_pc.serialized_order  # o (b g)
         s_inverse = s_pc.serialized_inverse  # o (b g)
@@ -187,25 +188,7 @@ class Stage(nn.Module):
 
     #   运用mamba的变长能力
     def forward(self, s_pc: PointCloud):
-        b_s = s_pc.batch[-1]+1
-        
-        query = s_pc.query
-        if query is not None:
-            query = self.cloud_cross_query(
-                query=query,
-                encoder_output=rearrange(s_pc.feat, "(b g) d -> b g d", b=b_s),
-            )
-        
         s_pc = self.scan(self.cpe(s_pc))
-
-        if query is not None:
-            s_pc.feat = self.query_cross_cloud(
-                query=rearrange(s_pc.feat, "(b g) d -> b g d", b=b_s),
-                encoder_output=query,
-            )
-            s_pc.feat = rearrange(s_pc.feat, "b g d -> (b g) d")
-            s_pc.sparse_conv_feat = s_pc.sparse_conv_feat.replace_feature(s_pc.feat)
-            s_pc.query = query
         return s_pc
 
 class Chain(nn.Module):     #下
@@ -222,16 +205,12 @@ class Chain(nn.Module):     #下
             coord = point.coord,  # 直接用head point的坐标！
             grid_coord=point.grid_coord,
             batch=point.batch,
-            order = point.order,           # TODO: 这个地方有点隐蔽,必须穿进来的,必须有这个field!
-            query = point.query if "query" in point.keys() else None
+            order = point.order           # TODO: 这个地方有点隐蔽,必须穿进来的,必须有这个field!
         )
         if "name" in point.keys():
             point_dict["name"] = point.name
         if "grid_size" in point.keys():
-            point_dict["grid_size"] = point.grid_size
-        if "labels" in point.keys(): 
-            point_dict["labels"] = point.labels
-            point_dict["shape_weight"] = point.shape_weight
+            point_dict["grid_size"] = point.grid_size 
         point_dict["ancestor"] = point
         point = PointCloud(point_dict)
         #TODO: 这里还有优化空间！
@@ -246,6 +225,7 @@ class PointSIS_Feature_Extractor(nn.Module):
         self.num_group = config.num_group
         self.order = [config.order] if isinstance(config.order, str) else config.order
         self.shuffle_orders = config.shuffle_orders
+        self.num_feature_levels = config.num_feature_levels  # len(enc_depths) - 1
         self.config = config
         self.feature_encoder = Feature_Encoder(
             config.in_channels, config.enc_channels[0]
@@ -265,8 +245,10 @@ class PointSIS_Feature_Extractor(nn.Module):
             enc.add_module(
                 name=f"enc_stage_{s}",
                 module=Stage(
-                    config=config,
-                    stage_num=s,
+                    feat_dim=config.enc_channels[s],
+                    depth=config.enc_depths[s],
+                    order_num=len(config.order),
+                    mamba_config=config.mamba_config,
                 ),
             )
             self.enc.add_module(f"enc_{s}", enc)
@@ -278,12 +260,23 @@ class PointSIS_Feature_Extractor(nn.Module):
         s_pc.serialization(order=self.order, shuffle_orders=self.shuffle_orders)
         s_pc.sparsify()
         return s_pc
+
+    def gather_enc(self, s_pc: PointCloud,b_s:int):
+        feat_list = []
+        # fn -> [fn, fn-1, ..., f0]
+        while "ancestor" in s_pc.keys():
+            feat_list.append(s_pc.feat)
+            s_pc = s_pc.ancestor
+        feat_list.append(s_pc.feat)
+        s_pc.gathered_feat = feat_list
+        return s_pc     
     
     def forward(self, s_pc: PointCloud):
         b_s = s_pc.batch[-1]+1
         s_pc = self.transform(s_pc)
         s_pc = self.feature_encoder(s_pc)  # => (b g) d
         s_pc = self.enc(s_pc)
+        s_pc = self.gather_enc(s_pc,b_s)
         
         return s_pc
 
@@ -294,10 +287,27 @@ class Latent_Query_Generator(nn.Module):
     def __init__(self, config:PointSISConfig):
         super().__init__()
         self.num_queries = config.num_queries
-        self.query_gen = nn.Embedding(config.num_queries, config.d_model)
+        self.query_embedding_proj_pre = nn.Sequential(
+            nn.Linear(config.num_group, config.num_queries //2),
+            nn.Linear(config.num_queries //2, config.num_queries),
+        )
+        self.query_embedding_proj_post = nn.Sequential(
+            nn.Linear(config.d_model, config.d_model*2),
+            nn.Linear(config.d_model*2, config.d_model),
+        )
+        self.layers = nn.ModuleList(
+            [MaskedAttentionDecoderLayer(config) for _ in range(config.num_feature_levels+1)]
+        )
 
-    def forward(self, b_s):
-        query = self.query_gen.weight.unsqueeze(0).repeat(b_s, 1, 1) # q l => b q l
+    def forward(self, gathered_feats:list[torch.Tensor]):
+        query = self.query_embedding_proj_pre(gathered_feats[0].transpose(1, 2))  # b d q
+        query = self.query_embedding_proj_post(query.transpose(1, 2))  # b q d
+        
+        for idx, layer in enumerate(self.layers):
+            query = layer(
+                query=query,
+                encoder_output=gathered_feats[idx],
+            )
         return query
     
 class PointSIS_Seg(nn.Module):
@@ -309,40 +319,58 @@ class PointSIS_Seg(nn.Module):
         super().__init__()
         self.num_queries = config.num_queries
         self.pointsis_feature_extractor = PointSIS_Feature_Extractor(config)
-        # self.mask_decoder = MaskDecoder(config)
-        self.mask_predictor = MaskPredictor(config)
+        self.mask_decoder = MaskDecoder(config)
         # {Query:
         # latent_query应当是个技术创新，直接从编码器的最后输出构造出query!
         self.latent_query_generator = Latent_Query_Generator(config)
+        self.query_position_gen = nn.Embedding(config.num_queries, config.d_model)
         # }
         # {融合prompt:
         self.merge_prompt = nn.Linear(config.d_model + 1, config.d_model)
+        self.merge_prompt_pos = nn.Linear(config.d_model+1, config.d_model)
         # }
         #
         self.loss = PMLoss(config)
 
-    def gen_prompt(self, s_o_i: torch.Tensor, b_s: int):
+    def forward(self, s_pc: PointCloud):
+        # s_pc: "coord,feat,offset,grid_size,s_o_i"可用，"labels,shape_weight"看情况!  # noqa: E501
+        s_pc = self.pointsis_feature_extractor(s_pc)
+        b_s = int(s_pc.batch[-1]) + 1
+        gathered_feats = s_pc.gathered_feat  # [(b g) d,...]
+        # 直接从点云中采样出query!
+        # v0: 好像不行！
+        # q_offset = (torch.ones_like( s_pc.batch_bin)* self.num_queries).cumsum(0).int()
+        # q_idx = fps(s_pc.coord, s_pc.offset, q_offset)  # n_1+n_2+...+n_b  # 幸亏这个fps
+        # query = gathered_feats[0][q_idx]  # (b q) d
+        # query = rearrange(query, "(b q) d -> b q d", b=b_s)
+        for i in range(len(gathered_feats)):
+            gathered_feats[i] = rearrange(gathered_feats[i], "(b g) d -> b g d", b=b_s)
+
+        query = self.latent_query_generator(gathered_feats)  # b q d
+        query_position = self.query_position_gen.weight.unsqueeze(0).repeat(b_s, 1, 1) # q l => b q l
         # 上下颌分类！后面要考虑搞成promt embedding!
+        s_o_i = s_pc.s_o_i  # b
         s_o_i = repeat(s_o_i, "b -> (b q) 1", q=self.num_queries)
         s_o_i = rearrange(s_o_i, "(b q) 1 -> b q 1", b=b_s)
-        return s_o_i 
-    
-    def forward(self, s_pc: PointCloud):
-        # s_pc: "coord,feat,offset,grid_size,s_o_i"可用，"labels,shape_weight"看情况!
-        b_s = int(s_pc.batch[-1]) + 1
-        query = self.latent_query_generator(b_s)  # b q d
-        s_o_i = self.gen_prompt(s_pc.s_o_i, b_s)
         # Merge_Prompt!
-        query = self.merge_prompt(
+        query_embeddings = self.merge_prompt(
             torch.cat([query, s_o_i], dim=-1)
-        )        
-        #
-        s_pc.query = query
-        s_pc = self.pointsis_feature_extractor(s_pc)
-        query = s_pc.query  # b q d  # TODO: 这里的query是经过Stage处理过的！
-        mask_features = rearrange(s_pc.feat, "(b g) d -> b g d", b=b_s)  # b g d  
-        pred_probs,pred_mask, _ = self.mask_predictor(query, mask_features)
-        
+        )
+        query_position_embeddings = self.merge_prompt_pos(
+            torch.cat([query_position, s_o_i], dim=-1)
+        )
+
+        mask_features = gathered_feats[-1]  # s_pc.feat 此时是收集起来的一个feat list!
+        encoder_hidden_states = gathered_feats[
+            0:-1
+        ]  # config.num_feature_levels控制！ 其实就是主干网的那几层输出!
+        pred_mask, pred_probs = self.mask_decoder(  # -> b q g , b q d
+            query_embeddings=query_embeddings,
+            query_position_embeddings=query_position_embeddings,
+            mask_features=mask_features,  # 编码主干网的最后一层输出！
+            encoder_hidden_states=encoder_hidden_states,  # 编码主干网的下面几层的输出！
+        )
+
         # TODO: pred_probs和 pred_mask 都无须activation！loss里面有！
         if "labels" in s_pc.keys():  # 如果有标签，就计算loss！！！
             labels = rearrange(s_pc.labels, "(b g) -> b g", b=b_s)
@@ -355,7 +383,9 @@ class PointSIS_Seg(nn.Module):
             s_pc.loss = m_i
         pred_mask = rearrange(pred_mask, "b q g -> b g q")
         pred_mask = rearrange(pred_mask, "b g q -> (b g) q")
-        s_pc.feat = pred_mask.contiguous() # FIXME:老问题 s_pc的feat过载太多，看怎么清晰一下！！！
+        s_pc.feat = (
+            pred_mask.contiguous()
+        )  # FIXME:老问题 s_pc的feat过载太多，看怎么清晰一下！！！
         s_pc.pred_probs = pred_probs
         return s_pc
 

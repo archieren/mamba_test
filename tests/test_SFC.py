@@ -159,15 +159,15 @@ def test_grouping_by_fps():
     for i in range(3):
         print(i)
         start_time = time.time()
-        s_pc= group_by_group_number(pc,16384, 11) # (1024*)
+        s_pc= group_by_group_number(pc,32768, 11) # (1024*)
         time_it(start_time)
 
         start_time = time.time()
-        s_s_pc= group_by_group_number(s_pc,4096, 11) # (1024*)
+        s_s_pc= group_by_group_number(s_pc,1024, 11) # (1024*)
         time_it(start_time)
 
         start_time = time.time()
-        s_s_s_pc= group_by_group_number(s_s_pc,1024, 11) # (1024*)
+        s_s_s_pc= group_by_group_number(s_s_pc,8, 11) # (1024*)
         time_it(start_time)         
 
 
@@ -262,7 +262,7 @@ def test_point_transformer():
         with torch.no_grad():
             start_time = time.time()
             out = model(dc)
-            #print(out.shape)
+            print(out.shape)
             time_it(start_time)
 
     # with profiler.profile(record_shapes=True, use_cuda=True, profile_memory=True) as prof:
@@ -445,12 +445,12 @@ def test_mask_predictor():
 
 # test_PointCloud()
 # test_grouping_by_ratio()
-##test_grouping_by_fps()
+test_grouping_by_fps()
 # test_fps_pointnet2()
 # test_pointmlp()
 # test_curvenet()
 
-# test_point_transformer()
+#test_point_transformer()
 ####test_point_sis()
 # test_patch()
 # test_serializedpooling()

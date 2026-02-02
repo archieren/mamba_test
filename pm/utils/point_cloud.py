@@ -12,6 +12,7 @@ from pointops import knn_query as knn
 from pointops import farthest_point_sampling as fps
 
 import spconv.pytorch as spconv
+import torch_scatter
 
 class PointCloud(Dict):
     """
@@ -57,13 +58,13 @@ class PointCloud(Dict):
         """
         assert self.batch is not None, "Batch cannot be none!"
         if "grid_coord" not in self.keys():
-            # if you don't want to operate GridSampling in data augmentation,
-            # please add the following augmentation into your pipline:
-            # dict(type="Copy", keys_dict={"grid_size": 0.01}),
-            # (adjust `grid_size` to what your want)
             assert {"grid_size", "coord"}.issubset(self.keys())
+            # 按batch计算每个点云的最大坐标
+            # scatter_max返回值和索引，我们只需要值
+            batch_max, _ = torch_scatter.scatter_max(self.coord, self.batch, dim=0)
+            coord_max = batch_max[self.batch]
             self.grid_coord = torch.div(
-                self.coord - self.coord.min(0).values, self.grid_size, rounding_mode="trunc"
+                coord_max - self.coord, self.grid_size, rounding_mode="trunc"
             ).int()
         if depth is None:
             # Adaptive measure the depth of serialization cube (length = 2 ^ depth)
@@ -85,9 +86,9 @@ class PointCloud(Dict):
             encode(self.grid_coord, batch=self.batch, depth=depth, order=order_) for order_ in order
         ]
         code = torch.stack(code)
-        order = torch.argsort(code,stable=True)
-        src=torch.arange(0, code.shape[1], device=order.device).repeat(code.shape[0], 1)
-        inverse = torch.zeros_like(order, device=order.device).scatter_(dim=1,index=order,src=src,)  
+        serialized_order = torch.argsort(code,stable=True)
+        src=torch.arange(0, code.shape[1], device=serialized_order.device).repeat(code.shape[0], 1)
+        inverse = torch.zeros_like(serialized_order, device=serialized_order.device).scatter_(dim=1,index=serialized_order,src=src,)  
         # 可以将inverse看成order的逆函数!!! 即: inverse[m, order[m, i]] = i
         # 针对上面,回顾小知识!
         # numpy里面传出来的broadcasting机制!!!
@@ -108,11 +109,11 @@ class PointCloud(Dict):
         if shuffle_orders:  # 应当是对扫描方式的shuffle!
             perm = torch.randperm(code.shape[0])
             code = code[perm]
-            order = order[perm]
+            serialized_order = serialized_order[perm]
             inverse = inverse[perm]
 
         self.serialized_code = code
-        self.serialized_order = order
+        self.serialized_order = serialized_order
         self.serialized_inverse = inverse
 
     def get_padding_and_inverse(self, patch_size=1024):
@@ -179,8 +180,12 @@ class PointCloud(Dict):
             # dict(type="Copy", keys_dict={"grid_size": 0.01}),
             # (adjust `grid_size` to what your want)
             assert {"grid_size", "coord"}.issubset(self.keys())
+            # 按batch计算每个点云的最大坐标
+            # scatter_max返回值和索引，我们只需要值
+            batch_max, _ = torch_scatter.scatter_max(self.coord, self.batch, dim=0)
+            coord_max = batch_max[self.batch]
             self["grid_coord"] = torch.div(
-                self.coord - self.coord.min(0)[0], self.grid_size, rounding_mode="trunc"
+                coord_max - self.coord, self.grid_size, rounding_mode="trunc"
             ).int()
         if "sparse_shape" in self.keys():
             sparse_shape = self.sparse_shape

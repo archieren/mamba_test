@@ -11,7 +11,7 @@ from torch import Tensor
 from einops import rearrange,einsum
 from scipy.optimize import linear_sum_assignment
 from typing import Dict, List, Optional, Tuple
-from pm.pointmamba.conifuguration_point_sis import  PointSISConfig, tooth_lables
+from pm.pointmamba.configuration_point_sis import  PointSISConfig, tooth_lables
 
 class CrossEntropyLoss(nn.Module):
     def __init__(
@@ -359,16 +359,20 @@ class PMHungarianMatcher(nn.Module):
         for i in range(batch_size):
             pred_probs = class_queries_logits[i].softmax(-1)        # -> q l
             pred_mask = masks_queries_logits[i]                     # -> q g
-            #Class cost
+            
+            # 1) Class cost - 分类成本：预测类别匹配度
             # Compute the classification cost. Contrary to the loss, we don't use the NLL, but approximate it in 1 - proba[target class]. The 1 is a constant that doesn't change the matching, it can be ommitted.
             cost_class = -pred_probs[:, class_labels[i]]               # 理解这里,class_labels[i]作为索引,所起的作用?  q l, t -> q t
-            # Mask cost
+            
+            # 2) Mask cost - 掩码成本：形状重合度
             target_mask = mask_labels[i].to(pred_mask)                 # t g
             # compute the cross entropy loss between each mask pairs -> shape (num_queries, num_labels)
             cost_mask = pair_wise_sigmoid_cross_entropy_loss(pred_mask, target_mask)  # q g, t g -> q t
-            # Dice loss
+            
+            # 3) Dice loss - Dice成本：轮廓相似度
             # Compute the dice loss betwen each mask pairs -> shape (num_queries, num_labels)
             cost_dice = pair_wise_dice_loss(pred_mask, target_mask)                   # q g, t g -> q t
+            
             # final cost matrix
             cost_matrix = self.cost_mask * cost_mask + self.cost_class * cost_class + self.cost_dice * cost_dice
             # 解决指派问题,用的是scipy里的实现！
@@ -477,18 +481,9 @@ class PMLoss(nn.Module):
         target_masks = torch.cat([target[target_indices] for target, (_, target_indices) in zip(mask_labels, indices)])
         target_shape_weight = torch.cat([target[target_indices] for target, (_, target_indices) in zip(shape_weight, indices)])
         
-        # 3.计算未匹配query的掩码损失
-        un_pred_masks = masks_queries_logits.clone()   # b q g
-        un_pred_masks[src_idx] = torch.finfo().min    # 将匹配上的掩码,置为一个极小值！
-         # 计算损失：鼓励输出负logits（sigmoid后接近0）
-        #loss_unmatched = F.relu( un_pred_masks + 1.0).mean()  # 惩罚大于-1的logits
-        # 或使用交叉熵
-        zero_target = torch.zeros_like(un_pred_masks)
-        loss_unmatched = F.binary_cross_entropy_with_logits(un_pred_masks, zero_target)
-             
+            
         losses = {
             "loss_mask" : sigmoid_cross_entropy_loss(pred_masks, target_masks, num_masks),
-            "loss_unmatched": loss_unmatched * 0.3,
             "loss_dice" : dice_loss(pred_masks, target_masks, num_masks),
             "loss_geo": geo_loss(pred_masks,target_masks,num_masks, target_shape_weight),
         }

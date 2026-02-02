@@ -15,7 +15,7 @@ from pm.pointmamba import PointSIS_Seg_Model, make_default_config
 from pm.service_api.protocol import SegRequest, SegResponse, str_to_file_bytes
 from pm.utils.point_cloud import PointCloud
 from pm.utils.align_the_mesh import align_the_mesh,S_O_I
-from pm.pointmamba.conifuguration_point_sis import TEETH
+from pm.pointmamba.configuration_point_sis import TEETH
 
 
 
@@ -96,7 +96,7 @@ def read_result(pc:PointCloud, threshold:float):
     offset=pc.offset                             # [N0, N0+N1,......]
     _offset = nn.functional.pad(offset, (1, 0))  # [0, N0, N0+N1,......]
     for i in range(len(offset)):                 # 
-        feat = pc.feat[_offset[i]:offset[i]].sigmoid()                                      # 第i个点云的分割结果!预测的掩码！
+        feat = pc.feat[_offset[i]:offset[i]].sigmoid()                                      # 第i个点云的分割结果!预测的掩码！ (g,q)
         feat = to_numpy(feat)
         
         pred_probs = pc.pred_probs[i]                          #  b q l, fetch i -> q l
@@ -108,9 +108,12 @@ def read_result(pc:PointCloud, threshold:float):
         seg_result = {}
         for j in range(len(indices)):
             if values[j] < 33:
-                t_num = TEETH.TEETH_cls_num[values[j]]
-                # print(t_num)
-                (one_teeth_seg,)= np.where(feat[:, indices[j]] > threshold)
+                which_class = values[j]
+                t_num = TEETH.TEETH_cls_num[which_class]
+
+                which_query = indices[j]
+                (one_teeth_seg,)= np.where(feat[:, which_query] > threshold)
+
                 seg_result[f'{t_num}'] = one_teeth_seg.tolist()
 
             # if values[j] < 2 :

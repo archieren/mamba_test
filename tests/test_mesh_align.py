@@ -66,7 +66,8 @@ def fit_ellipsoid(points, method='best_fit'):
 #source_dir= Path("/home/archie/Projects/data/口扫模型/牙齿分割标注数据---/标注数据")
 #source_dir= Path("/home/archie/Projects/data/TestSet/ATA-TestSample/Separate/temp2")
 #source_dir = Path("/home/archie/Projects/data/口扫模型/口扫模型分割新增（有乳牙）")
-source_dir = Path("/home/archie/Projects/data/口扫模型/HowTo")
+source_dir = Path("/home/archie/Projects/data/口扫模型/牙齿分割标注数据---/牙齿分割10个-ns/")
+#source_dir = Path("/home/archie/Projects/data/口扫模型/HowTo")
 stems=[ stl_item.stem for stl_item in source_dir.glob("*.stl")]
 # stem = "lower0059"
 
@@ -111,23 +112,26 @@ def oral_scan_align(stem:str):
 
     points_out = np.asarray(mesh.vertices)
     #mesh_elli = create_a_fit_ellipsoid(points_out, method='bounding')
-
-    geos = [frame_new] # mesh,
+    print(mesh)
+    geos = [mesh] # mesh,
     points_ = np.asarray(mesh.vertices)
-    for key, indexes_value in label['seg'].items():
-        #print(key, indexes_value)
-        points_part = points_[indexes_value]
+    
+    # seg = label.get("seg")                       # 简单考虑{"seg" -> {"tooth-id"-> [index_of_vertex]}} 或 {"tooth-id"-> [index_of_vertex]}
+    # seg_labels = seg if seg is not None else label
+    # for key, indexes_value in seg_labels.items():
+    #     #print(key, indexes_value)
+    #     points_part = points_[indexes_value]
         
-        part_elli = create_a_fit_ellipsoid(points_part, method='bounding')
-        geos.append(part_elli)
+    #     part_elli = create_a_fit_ellipsoid(points_part, method='bounding')
+    #     geos.append(part_elli)
         
-        part_box = fit_bounding_box(points_part)
-        geos.append(part_box)
+    #     part_box = fit_bounding_box(points_part)
+    #     geos.append(part_box)
     
     points_[:,2] = 0
-    project_pc = o3d.geometry.PointCloud()
-    project_pc.points = o3d.utility.Vector3dVector(points_)
-    geos.append(project_pc)   
+    # project_pc = o3d.geometry.PointCloud()
+    # project_pc.points = o3d.utility.Vector3dVector(points_)
+    #geos.append(project_pc)   
     # points_31 = np.asarray(mesh.vertices)[label['seg']['31']]
     # mesh_elli_31 = create_a_fit_ellipsoid(points_31, method='bounding')
     # points_36 = np.asarray(mesh.vertices)[label['seg']['36']]
@@ -142,8 +146,8 @@ def oral_scan_align(stem:str):
     o3d.visualization.draw_geometries(geos,point_show_normal=True)
     
 for stem in stems:
-    if stem == "00252_l":
-        print(stem)
-        oral_scan_align(stem)
+    # if stem == "00252_l":
+    #     print(stem)
+    oral_scan_align(stem)
         
 #

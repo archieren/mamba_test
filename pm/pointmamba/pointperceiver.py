@@ -6,7 +6,7 @@ from torch import Tensor
 from einops import rearrange,einsum,repeat
 from typing import Optional, Tuple
 
-from pm.pointmamba.conifuguration_point_sis import  PointSISConfig
+from pm.pointmamba.configuration_point_sis import  PointSISConfig
 
 """
 在point_sis_masked_former里,出现训练结果很好,但即使用训练数据做测试,结果也极差的情况!不知为何！
