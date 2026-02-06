@@ -154,7 +154,7 @@ class Mamba1Config:     # 抄自 Mamba1的初始化参数!!!
 @dataclass
 class PointSISConfig():
         d_cat:        int=1      # 数据的范畴
-        in_channels:  int = 7    # 7: coord + normals + cur;  4: normals + cur;  3: normals
+        in_channels:  int = 8    # 8 : coord + normals + cur + s_o_i; 7: coord + normals + cur;  4: normals + cur;  3: normals
         # About SFC
         #Spatial Filling Curve!
         #{"z", "z-trans", "z-reverse","hilbert", "hilbert-trans", "hilbert-reverse"}
@@ -182,7 +182,7 @@ class PointSISConfig():
         num_queries:         int = 64             
         dropout:             float = 0.1
         ## About loss
-        class_weight:        float = 2.0
+        class_weight:        float = 5.0
         mask_weight:         float = 5.0
         dice_weight:         float = 5.0
         no_object_weight:    float = 0.2     # 0.1 是原始值！            

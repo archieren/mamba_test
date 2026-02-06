@@ -18,7 +18,10 @@ class MaskPredictor(nn.Module):
         self.embed_dim = config.d_model
         self.nhead = config.nhead
         self.num_classes = config.num_labels
-        self.predict_class = nn.Linear(self.embed_dim, self.num_classes+1)
+        #self.predict_class = nn.Linear(self.embed_dim, self.num_classes+1)
+        self.predict_class = MLP(in_channels=self.embed_dim,
+                            out_channels=self.num_classes+1, 
+                            hidden_channels=int(self.embed_dim *2))
         # TODO: 要还是不要?好像无差别！
         self.predict_mask = MLP(in_channels=self.embed_dim,
                             out_channels=self.embed_dim, 
@@ -26,18 +29,20 @@ class MaskPredictor(nn.Module):
         self.query_norm = nn.LayerNorm(self.embed_dim)           
 
     def forward(self, query:torch.Tensor, memory:torch.Tensor) -> Tuple[Tensor]:
-        query_output = self.query_norm(query)
-        predicted_classes = self.predict_class(query_output)    # b q d -> b q (num_classes+1)
+        normed_query = self.query_norm(query)
+        predicted_classes = self.predict_class(normed_query)    # b q d -> b q (num_classes+1)
         
         # TODO: 据说einsum对jit不友好,...
         # 注意predict_mask和predicted_mask的区别！
-        # predict_mask = self.predict_mask(query_output)        # b q d -> b q d
-        predicated_mask = einsum(self.predict_mask(query_output), memory, "b q d, b g d -> b q g ")                # b q d , b g d -> b q g
-        attension_mask = predicated_mask.sigmoid().squeeze(1).repeat(1, self.nhead, 1, 1)   # b q g -> b h q g
-        attension_mask = rearrange(attension_mask, " b h q g -> (b h) q g")          # 注意： torch.nn.MultiheadAttention的要求！！！ 原文实现用的是flatten(0,1) 
-        attension_mask = (attension_mask < 0.5).bool()
-        attension_mask = attension_mask.detach()                                     # no_grad! why?
-        return predicted_classes,predicated_mask, attension_mask                                                      
+        predicted_mask = einsum(self.predict_mask(normed_query), memory, "b q d, b g d -> b q g ") / (self.embed_dim ** 0.5)  # b q d , b g d -> b q g
+        # attention_mask = predicated_mask.sigmoid().squeeze(1).repeat(1, self.nhead, 1, 1)   # b q g -> b h q g
+        # attention_mask = rearrange(attention_mask, " b h q g -> (b h) q g")          # 注意： torch.nn.MultiheadAttention的要求！！！ 原文实现用的是flatten(0,1) 
+        # attention_mask = (attention_mask < 0.5).bool()
+        # attention_mask = attention_mask.detach()                                     # no_grad! why?
+        
+        # 由于query_cross_cloud的效果，我觉得predicted_mask可以换一种方法来计算了！
+        attention_mask = None   # TODO: 先不使用 attention_mask
+        return predicted_classes,predicted_mask, attention_mask                                                      
 
 class MaskedSelfAttention(nn.Module):     # 这个MaskedSelfAttention和一般的SelfAttention没有任何区别！
     def __init__(

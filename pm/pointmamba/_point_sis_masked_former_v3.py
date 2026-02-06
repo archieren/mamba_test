@@ -21,6 +21,7 @@ from pm.utils.point_cloud import FeatPropagation, Grouper_By_NumGroup, PointClou
 from pointops import farthest_point_sampling as fps
 
 """_这里准备尝试Dynamic Perceiver思路
+soi还没有放到数据里！
 """
 
 
@@ -231,8 +232,6 @@ class Chain(nn.Module):     # 构造可以回溯的输出结果链！
             point_dict["name"] = point.name
         if "grid_size" in point.keys():
             point_dict["grid_size"] = point.grid_size
-        if "s_o_i" in point.keys():
-            point_dict["s_o_i"] = point.s_o_i
         if "labels" in point.keys(): 
             point_dict["labels"] = point.labels
             point_dict["shape_weight"] = point.shape_weight
@@ -279,11 +278,7 @@ class PointSIS_Feature_Extractor(nn.Module):
     def transform(self, s_pc: PointCloud):  
         # TODO: 这个地方才开始用到grid_size！
         # 准备好什么样的输入呢？
-        assert s_pc.s_o_i is not None, "s_pc must have s_o_i field!"
-        s_o_i = s_pc.s_o_i.unsqueeze(-1).repeat(1, self.num_group)
-        s_o_i = rearrange(s_o_i, "b g -> (b g) 1")
-        
-        s_pc.feat = torch.cat([s_pc.coord, s_pc.feat, s_o_i], dim=-1)  # BG 7 #此处融入坐标！
+        s_pc.feat = torch.cat([s_pc.coord, s_pc.feat], dim=-1)  # BG 7 #此处融入坐标！
         s_pc.order = self.order
         s_pc.serialization(order=self.order, shuffle_orders=self.shuffle_orders)
         s_pc.sparsify()
@@ -332,6 +327,9 @@ class PointSIS_Seg(nn.Module):
         # latent_query应当是个技术创新，直接从编码器的最后输出构造出query!
         self.latent_query_generator = Latent_Query_Generator(config)
         # }
+        # {融合prompt:
+        self.merge_prompt = nn.Linear(config.d_model + 1, config.d_model)
+        # }
         #
         self.loss = PMLoss(config)
 
@@ -342,18 +340,16 @@ class PointSIS_Seg(nn.Module):
         return s_o_i 
     
     def forward(self, s_pc: PointCloud):
-        """_summary_
-        Args:
-            s_pc (PointCloud): The Grouped PointCloud, with "coord,feat,offset,grid_size,s_o_i" as inputs. 
-                                "labels,shape_weight" are optional, depending on whether it's training or inference!
-        Returns:
-            PointCloud: s_pc with updated "feat" as predicted mask, and "pred_probs" as predicted class probabilities. 
-                        If in training, also with "loss".
-        """
         # s_pc: "coord,feat,offset,grid_size,s_o_i"可用，"labels,shape_weight"看情况!
         b_s = int(s_pc.batch[-1]) + 1
-        s_pc.query = self.latent_query_generator(b_s)  # b q d
+        query = self.latent_query_generator(b_s)  # b q d
+        s_o_i = self.gen_prompt(s_pc.s_o_i, b_s)
+        # Merge_Prompt!
+        query = self.merge_prompt(
+            torch.cat([query, s_o_i], dim=-1)
+        )        
         #
+        s_pc.query = query
         s_pc = self.pointsis_feature_extractor(s_pc)
         query = s_pc.query  # b q d  # TODO: 这里的query是经过Stage处理过的！
         mask_features = rearrange(s_pc.feat, "(b g) d -> b g d", b=b_s)  # b g d  

@@ -363,7 +363,6 @@ class PMHungarianMatcher(nn.Module):
             # 1) Class cost - 分类成本：预测类别匹配度
             # Compute the classification cost. Contrary to the loss, we don't use the NLL, but approximate it in 1 - proba[target class]. The 1 is a constant that doesn't change the matching, it can be ommitted.
             cost_class = -pred_probs[:, class_labels[i]]               # 理解这里,class_labels[i]作为索引,所起的作用?  q l, t -> q t
-            
             # 2) Mask cost - 掩码成本：形状重合度
             target_mask = mask_labels[i].to(pred_mask)                 # t g
             # compute the cross entropy loss between each mask pairs -> shape (num_queries, num_labels)
@@ -435,19 +434,24 @@ class PMLoss(nn.Module):
             - **loss_cross_entropy** -- The loss computed using cross entropy on the predicted and ground truth labels.
         """
         pred_logits = class_queries_logits
-        batch_size, num_queries, _ = pred_logits.shape
+        batch_size, num_queries , num_classes = pred_logits.shape
         criterion = nn.CrossEntropyLoss(weight=self.empty_weight)
         # 下面这段,要注意各种索引技巧！！！
-        # idx==(target_indices, prediction_indices), 
-        # shape为(t_0+t_1+...+t_(b-1), t_0+t_1+...+t_(b-1)).索引出了t_0+t_1+...+t_(b-1)个位置！
-        idx = self._get_predictions_permutation_indices(indices) 
-        target_classes_o = torch.cat([target[indices_tgt] for target, (_, indices_tgt) in zip(class_labels, indices)])  #  -> t_0+t_1+...+t_(b-1)
-        # TODO: fill_value是0还是self.num_labels!
-        target_classes = torch.full((batch_size, num_queries), fill_value=0, dtype=target_classes_o.dtype, device=pred_logits.device)  # b q
-        target_classes[idx] = target_classes_o     # 将target_classes,在idx索引出的位置上,填入目标值！！！
-        
-        pred_logits_transposed = pred_logits.transpose(1, 2)         # b q l -> b l q
-        loss_ce = criterion(pred_logits_transposed, target_classes)  # b l q, b q
+        queries_idx = self._get_predictions_permutation_indices(indices)
+        labels_idx = self._get_targets_permutation_indices(indices)
+        # print("queries_idx:", queries_idx)
+        # print("labels_idx:", labels_idx)
+        # for target, (_, indices_tgt) in zip(class_labels, indices):
+        #     print("target:", target)
+        #     print("indices_tgt:", indices_tgt)
+        #     print("target[indices_tgt]",target[indices_tgt])
+        ###  获取匹配的目标类别,并调整格式！
+        class_labels = torch.cat([class_label[label_idx] for class_label, (_, label_idx) in zip(class_labels, indices)])  #  -> t_0+t_1+...+t_(b-1)
+        # TODO: target_classes为什么要搞成这个样子?
+        target_classes = torch.full((batch_size, num_queries), fill_value=0, dtype=class_labels.dtype, device=pred_logits.device)  # b q
+        target_classes[queries_idx] = class_labels     # 将target_classes,在idx索引出的位置上,填入目标值！！！即: 那个query，预测了那个类！
+        # 计算交叉熵损失
+        loss_ce = criterion(pred_logits.transpose(1, 2), target_classes)  # b l q, b q
         losses = {"loss_cross_entropy": loss_ce}
 
         del pred_logits
@@ -480,7 +484,6 @@ class PMLoss(nn.Module):
         # target_masks = mask_labels[tgt_idx]                       # TODO:想想！ 为什么要按列表来处理了！
         target_masks = torch.cat([target[target_indices] for target, (_, target_indices) in zip(mask_labels, indices)])
         target_shape_weight = torch.cat([target[target_indices] for target, (_, target_indices) in zip(shape_weight, indices)])
-        
             
         losses = {
             "loss_mask" : sigmoid_cross_entropy_loss(pred_masks, target_masks, num_masks),
@@ -492,8 +495,7 @@ class PMLoss(nn.Module):
         return losses
 
     def _get_predictions_permutation_indices(self, indices):
-        # Permute predictions following indices
-        # 
+        # Permute predictions following indices 
         batch_indices = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])   # t_0+t_1+...+t_(b-1) # 所谓对batch的索引
         predictions_indices = torch.cat([src for (src, _) in indices])                               # t_0+t_1+...+t_(b-1) # 
         return batch_indices, predictions_indices

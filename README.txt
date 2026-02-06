@@ -41,3 +41,23 @@ $pip install -U torch_geometric
 pointnet2_ops_lib里的提供的,对batch的使用是固定.
 而torch_geometric里的及pointcept的pointops?里的,是基于Graph视角的.
 看./assets/offset_dark.png这张图!!!
+
+
+#
+   
+{
+    "name":"ANTHROPIC_AUTH_TOKEN", 
+    "value":"f62b42fabb6d4a79a9f366a3f6836b13.nfjoSpQBVb57Wa7B"
+},
+{
+    "name":"ANTHROPIC_BASE_URL", 
+    "value":"https://open.bigmodel.cn/api/anthropic"
+},
+{
+    "name":"API_TIMEOUT_MS",
+    "value":"3000000"
+},
+{
+    "name":"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    "value":"1"
+}

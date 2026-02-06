@@ -31,7 +31,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 #参数：TODO
-epoches = 2000
+epoches = 500
 batch_size = 1
 
 def time_it(start_time):
@@ -147,14 +147,14 @@ def train():
         mean_loss = np.mean(loss_batch)
         print(f"Epoch_{epoch+1}/{epoches}'s meam_loss:{mean_loss}")
         
-        # model=model.eval()
-        # with torch.no_grad():        
-        #     with tqdm(test_loader) as t:
-        #         for i,data in enumerate(t):
-        #             pc = model(PointCloud(data))                      # prediction
-        #             t.set_description(f"Epoch {epoch}/{epoches}: Loss:{loss_fn(pc)}")
-        
-        torch.save(model.state_dict(), checkpoints_file)
-        print("Saved a checkpoints!")
+        if (epoch+1) % 10 == 0:
+            model=model.eval()
+            with torch.no_grad():        
+                with tqdm(test_loader) as t:
+                    for i,data in enumerate(t):
+                        pc = model(PointCloud(data))                      # prediction
+                        t.set_description(f"Epoch {epoch+1}/{epoches}: Loss:{loss_fn(pc)}")
+            torch.save(model.state_dict(), checkpoints_file)
+            print("Saved a checkpoints!")
 train()
 input()
