@@ -14,7 +14,7 @@ from mamba_ssm.modules.mamba2 import Mamba2 as Mamba
 # 直接使用mamba推荐的Block, 不像Point Mamba抄过来! 
 # 这需要看片文章"On Layer Normalization in the Transformer Architecture"
 from mamba_ssm.modules.block import Block 
-from pm.pointmamba.configuration_point_sis import Mamba1Config, PointSISConfig
+from pm.pointmamba._configuration_point_sis_vp import Mamba1Config, PointSISConfig
 from pm.pointmamba.losses import PMLoss
 from pm.pointmamba.pointmask import MaskDecoder
 from pm.utils.point_cloud import PointCloud, Grouper_By_NumGroup,FeatPropagation

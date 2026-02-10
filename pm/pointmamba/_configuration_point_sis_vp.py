@@ -135,7 +135,7 @@ class Mamba1Config:     # 抄自 Mamba1的初始化参数!!!
     d_state: int = 64   # N in paper/comments -- Default 128
     d_conv:  int = 4
     expand:  int = 2     # E in paper/comments -- Default 2
-    headdim: int = 24    # 24<->96 # Default is 64
+    headdim: int = 32    # 24<->96 # Default is 64
     # dt_rank:    Union[int, str] = 'auto'
     # dt_min:     float = 0.001
     # dt_max:     float = 0.1
@@ -161,37 +161,23 @@ class PointSISConfig():
         order              = ["hilbert", "hilbert-reverse" ]  # "z", "z-reverse"
         shuffle_orders:bool=False
         mamba_config = asdict(Mamba1Config())
-        d_model:      int = 96       # feature_dim pos_dim d_model 是一样的!, 未将d_model放到mamba_config里！
-        # feature_dims: int = d_model
-        # pos_dims:     int = d_model
-        
-        
+        d_model:      int = 128       # feature_dim pos_dim d_model 是一样的!, 未将d_model放到mamba_config里！
+
         #Follow MLP 
         # AboutGroup
         group_ratio:  float = 0.09 # 按ratio方式下采样！
         num_group:    int = 32768 # 4096 # 8172 # 16384
         group_size:   int = 11  # 邻居个数       
-        #depth             = [2, 2, 2, 4, 2] # 每层的mamba堆叠深度！！！ 
         # TODO: 加了下采样后，加了一个Stage！
-        enc_depths  =   ( 6, 3, 6, 3) 
-        enc_channels=   (96, 96, 192, 384) # v1
-        stride      =   (2,2,2)        # 这一块,可能需要仔细考虑！
-        has_decoder: bool = True    
-        dec_depths  =   (3, 3, 3)
-        dec_channels=   (96, 96, 192) 
+        enc_depths  =   ( 6, 6, 6) 
+        enc_channels=   (128, 128, 128)
 
-        use_interpolation: bool=False              # 在解码器中使用插值上采样！
-        k:      int = 7                             #上采样用到的邻居个数！
 
-        #out_indices       = [3, 7, 11]   # 弃用！
-
-        #MaskEncoder
-        enc_layer_depth: int = 3
         #MaskDecoder!
         nhead:               int = 4
         dim_feedforward:     int = 2048
         num_feature_levels:  int = len(enc_depths) - 1       # 
-        num_decode_layers:   int = int(num_feature_levels*2)
+        num_decode_layers:   int = int(num_feature_levels)
         num_labels:          int =  TEETH.all_classes
         num_queries:         int = 64             
         dropout:             float = 0.1

@@ -67,7 +67,7 @@ for case in simple_test_case:
     file_path = Path(root) / "Separate" / "TestData" / f"{case}.stl"
     print(len(open(file_path, 'rb').read()))
     f_s = file_bytes_to_str(open(file_path, 'rb').read())
-    req_raw = SegRequest(stl=f_s, s_o_i=case, threshhold=0.1)
+    req_raw = SegRequest(stl=f_s, s_o_i=case, threshhold=0.0001)
     response = requests.post(http_url, json=req_raw.model_dump())
     stl = response.json()
     file_path = Path(root) / "Separate" / "TestData" / f"{case}.json"

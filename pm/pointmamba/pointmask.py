@@ -31,17 +31,17 @@ class MaskPredictor(nn.Module):
     def forward(self, query:torch.Tensor, memory:torch.Tensor) -> Tuple[Tensor]:
         normed_query = self.query_norm(query)
         predicted_classes = self.predict_class(normed_query)    # b q d -> b q (num_classes+1)
-        
         # TODO: 据说einsum对jit不友好,...
         # 注意predict_mask和predicted_mask的区别！
         predicted_mask = einsum(self.predict_mask(normed_query), memory, "b q d, b g d -> b q g ") / (self.embed_dim ** 0.5)  # b q d , b g d -> b q g
-        # attention_mask = predicated_mask.sigmoid().squeeze(1).repeat(1, self.nhead, 1, 1)   # b q g -> b h q g
-        # attention_mask = rearrange(attention_mask, " b h q g -> (b h) q g")          # 注意： torch.nn.MultiheadAttention的要求！！！ 原文实现用的是flatten(0,1) 
-        # attention_mask = (attention_mask < 0.5).bool()
-        # attention_mask = attention_mask.detach()                                     # no_grad! why?
+        print(predicted_mask.mean().sigmoid(), predicted_mask.max().sigmoid(), predicted_mask.min().sigmoid())
+        attention_mask = predicted_mask.sigmoid().squeeze(1).repeat(1, self.nhead, 1, 1)   # b q g -> b h q g
+        attention_mask = rearrange(attention_mask, " b h q g -> (b h) q g")          # 注意： torch.nn.MultiheadAttention的要求！！！ 原文实现用的是flatten(0,1) 
+        attention_mask = (attention_mask < 0.5).bool()
+        attention_mask = attention_mask.detach()                                     # no_grad! why?
         
         # 由于query_cross_cloud的效果，我觉得predicted_mask可以换一种方法来计算了！
-        attention_mask = None   # TODO: 先不使用 attention_mask
+        # attention_mask = None   # TODO: 先不使用 attention_mask
         return predicted_classes,predicted_mask, attention_mask                                                      
 
 class MaskedSelfAttention(nn.Module):     # 这个MaskedSelfAttention和一般的SelfAttention没有任何区别！
@@ -149,18 +149,18 @@ class MaskedAttentionDecoderLayer(nn.Module):
         self,
         # Q
         query: torch.Tensor,
-        query_position_embeddings: Optional[torch.Tensor] = None,
+        query_pos_emb: Optional[torch.Tensor] = None,
         # K,V
         encoder_output: Optional[torch.Tensor] = None,    # To k,v
-        encoder_output_position_embeddings:   Optional[torch.Tensor] = None,
+        encoder_output_pos_emb:   Optional[torch.Tensor] = None,
         # predicated_mask
         attention_mask: Optional[torch.Tensor] = None,    # TODO: 这个要理解！
     ) -> Tensor:
         # Masked(Cross)-Attention Block
         residual = query
         query, _ = self.cross_attn(                       # 这是 torch自带的！
-            query=self.with_pos_embed(query, query_position_embeddings),
-            key  =self.with_pos_embed(encoder_output, encoder_output_position_embeddings),
+            query=self.with_pos_embed(query, query_pos_emb),
+            key  =self.with_pos_embed(encoder_output, encoder_output_pos_emb),
             value=encoder_output,
             attn_mask=attention_mask,
             key_padding_mask=None,
@@ -173,7 +173,7 @@ class MaskedAttentionDecoderLayer(nn.Module):
             residual = query
             query = self.self_attn(                            # 
                 hidden_states=query,
-                position_embeddings=query_position_embeddings,
+                position_embeddings=query_pos_emb,
                 attention_mask=None,
             )
             query = nn.functional.dropout(query, p=self.dropout, training=self.training)
@@ -220,14 +220,14 @@ class MaskDecoder(nn.Module):
         query_hidden_states = query_embeddings  # b q d                            # 作为decode_layer的输入！ 直接级联
 
         query_hidden_states = self.layernorm(query_embeddings)        # 作为MaskPredictor的第一次输入！须先normalize！
-        predicated_classes,predicated_mask, attention_mask = self.mask_predictor(query_hidden_states, mask_features)
+        predicated_classes, predicated_mask, attention_mask = self.mask_predictor(query_hidden_states, mask_features)
         for idx, decoder_layer in enumerate(self.layers):
             level_index = idx % self.num_feature_levels
             attention_mask[torch.where(attention_mask.sum(-1) == attention_mask.shape[-1])] = False  # 避免什么？
             query_hidden_states = decoder_layer(                            # 注: layer_output 已经被 normalized了！
                 # Q
                 query = query_hidden_states,
-                query_position_embeddings = query_position_embeddings,
+                query_pos_emb = query_position_embeddings,
                 #level_index=level_index,
                 # k,v
                 encoder_output = encoder_hidden_states[level_index],
