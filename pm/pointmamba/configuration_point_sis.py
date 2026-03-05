@@ -14,23 +14,26 @@ TEETH_num = {18,17,16,15,14,13,12,11,
 @dataclass
 class TEETH:
     # 牙编号到类号
-    TEETH_num_cls :ClassVar[dict[int,int]]  = { 18: 8, 17: 7, 16: 6, 15: 5, 14: 4, 13: 3, 12: 2, 11: 1,
-                                                28:16, 27:15, 26:14, 25:13, 24:12, 23:11, 22:10, 21: 9,
-                                                38:24, 37:23, 36:22, 35:21, 34:20, 33:19, 32:18, 31:17,
-                                                48:32, 47:31, 46:30, 45:29, 44:28, 43:27, 42:26, 41:25}
-                                # 类号到牙编号
-    TEETH_cls_num  :ClassVar[dict[int,int]] = {  8:18,  7:17,  6:16,  5:15,  4:14,  3:13,  2:12,  1:11,
-                                                16:28, 15:27, 14:26, 13:25, 12:24, 11:23, 10:22,  9:21,
-                                                24:38, 23:37, 22:36, 21:35, 20:34, 19:33, 18:32, 17:31,
-                                                32:48, 31:47, 30:46, 29:45, 28:44, 27:43, 26:42, 25:41}
+    # TEETH_num_cls :ClassVar[dict[int,int]]  = { 18: 8, 17: 7, 16: 6, 15: 5, 14: 4, 13: 3, 12: 2, 11: 1,
+    #                                             28:16, 27:15, 26:14, 25:13, 24:12, 23:11, 22:10, 21: 9,
+    #                                             38:24, 37:23, 36:22, 35:21, 34:20, 33:19, 32:18, 31:17,
+    #                                             48:32, 47:31, 46:30, 45:29, 44:28, 43:27, 42:26, 41:25}
+    #                             # 类号到牙编号
+    # TEETH_cls_num  :ClassVar[dict[int,int]] = {  8:18,  7:17,  6:16,  5:15,  4:14,  3:13,  2:12,  1:11,
+    #                                             16:28, 15:27, 14:26, 13:25, 12:24, 11:23, 10:22,  9:21,
+    #                                             24:38, 23:37, 22:36, 21:35, 20:34, 19:33, 18:32, 17:31,
+    #                                             32:48, 31:47, 30:46, 29:45, 28:44, 27:43, 26:42, 25:41}
 
-    # superior_gingival :ClassVar[int] = 33
-    # inferior_gingival :ClassVar[int] = 34
+    
+    superior_tooth :ClassVar[int] = 1
+    inferior_tooth :ClassVar[int] = 2
+    superior_gingival :ClassVar[int] = 3
+    inferior_gingival :ClassVar[int] = 4
 
     # superior_dentition :ClassVar[int] = 35
     # inferior_dentition :ClassVar[int] = 36
 
-    all_classes :ClassVar[int]  = 32
+    all_classes :ClassVar[int]  = 4
 
 # 所有牙齿都归为一类
 # @dataclass
@@ -98,16 +101,18 @@ def tooth_lables(labels:torch.Tensor, shape_weight:torch.Tensor) -> List[torch.T
                 x = x.unsqueeze(0)
                 masks.append(x)
                 #
-                cls = TEETH.TEETH_num_cls[i]                 # 牙编号 -> Class!
-                class_labels.append(cls)
                 up_or_low="up" if i//10 in {1, 2, 5, 6} else "low"  # TODO:how?
-        #       
-        # non_tooth_mask = torch.where(labels[b]>0, 0, 1).unsqueeze(0)             # 牙龈
-        # if non_tooth_mask.sum()>0:
-        #    #
-        #    masks.append(non_tooth_mask)
-        #    #
-        #    class_labels.append(TEETH.superior_gingival if up_or_low == "up" else TEETH.inferior_gingival)
+                #cls = TEETH.TEETH_num_cls[i]                 # 牙编号 -> Class!
+                #class_labels.append(cls)
+                cls = TEETH.superior_tooth if up_or_low == "up" else TEETH.inferior_tooth
+                class_labels.append(cls)
+              
+        non_tooth_mask = torch.where(labels[b]>0, 0, 1).unsqueeze(0)             # 牙龈
+        if non_tooth_mask.sum()>0:
+           #
+           masks.append(non_tooth_mask)
+           #
+           class_labels.append(TEETH.superior_gingival if up_or_low == "up" else TEETH.inferior_gingival)
 
         # all_tooth_mask = torch.where(labels[b]>0, 1, 0).unsqueeze(0)             # 所有牙齿
         # if all_tooth_mask.sum()> 0:
@@ -193,7 +198,7 @@ class PointSISConfig():
         num_feature_levels:  int = len(enc_depths) - 1       # 
         num_decode_layers:   int = int(num_feature_levels*2)
         num_labels:          int =  TEETH.all_classes
-        num_queries:         int = 64             
+        num_queries:         int = 24             
         dropout:             float = 0.1
         ## About loss
         class_weight:        float = 5.0

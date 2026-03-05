@@ -31,7 +31,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 #参数：TODO
-epoches = 500
+epoches = 512
 batch_size = 1
 
 def time_it(start_time):
@@ -129,7 +129,7 @@ def train():
     model= model.to(device)
     
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4)
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[512,], gamma=0.1)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[1024,], gamma=0.1)
     
     for epoch in range(epoches):
         model= model.train()

@@ -474,8 +474,8 @@ class Latent_Query_Generator(nn.Module):
         self.query_pos_emb = nn.Embedding(config.num_queries, config.d_model)
 
     def forward(self, b_s):
-        query = self.query_emb.weight.unsqueeze(0).repeat(b_s, 1, 1) # q l => b q l
-        query_pos = self.query_pos_emb.weight.unsqueeze(0).repeat(b_s, 1, 1) # q l => b q l
+        query = self.query_emb.weight.unsqueeze(0).repeat(b_s, 1, 1) # q d => b q d
+        query_pos = self.query_pos_emb.weight.unsqueeze(0).repeat(b_s, 1, 1) # q d => b q d
 
         # 直接从点云中采样出query!
         # v0: 好像不行！

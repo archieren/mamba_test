@@ -99,32 +99,34 @@ def read_result(pc:PointCloud, threshold:float):
         feat = pc.feat[_offset[i]:offset[i]]
         feat = feat.sigmoid()                                      # 第i个点云的分割结果!预测的掩码！ (g,q)
         feat = to_numpy(feat)
-        # print(feat.mean(), feat.max(), feat.min())
+        print(feat.mean(), feat.max(), feat.min(), feat.shape)
         pred_probs = pc.pred_probs[i]                          #  b q l, fetch i -> q l
         query_pred_cls = torch.argmax(l_m(pred_probs),dim=-1)  # 每个 query预测了那个类！ -> q        
         query_pred_cls_s = query_pred_cls.to_sparse()                # 将预测为0类的去掉了！ FIXME:这是个好办法吗？
         #
         shot_query_indices = to_numpy(query_pred_cls_s.indices()[0])                 # TODO:注意这个零！
         class_values  = to_numpy(query_pred_cls_s.values())
-
+        print("shot_query_indices:", shot_query_indices)
+        print(len(class_values), ":", class_values)
         seg_result = {}
         for j in range(len(shot_query_indices)):
-            if class_values[j] < 33:
-                which_class = class_values[j]
-                t_num = TEETH.TEETH_cls_num[which_class]
+            # if class_values[j] < 33:
+            #     which_class = class_values[j]
+            #     t_num = TEETH.TEETH_cls_num[which_class]
 
-                which_query = shot_query_indices[j]
-                (one_teeth_seg,)= np.where(feat[:, which_query] > threshold)
-                seg_result[f'{t_num}'] = one_teeth_seg.tolist()
+            #     which_query = shot_query_indices[j]
+            #     (one_teeth_seg,)= np.where(feat[:, which_query] > threshold)
+            #     seg_result[f'{t_num}'] = one_teeth_seg.tolist()
 
             # if values[j] < 2 :
             #     t_num = values[j]
             #     (one_teeth_seg,)= np.where(feat[:, indices[j]] > threshold)
             #     seg_result[f'{t_num}+{j}'] = one_teeth_seg.tolist()
 
-            # if values[j] in {33, 34, 35, 36}: # TODO: 牙龈， 合并的牙齿！
-            #     (one_teeth_seg,)= np.where(feat[:, indices[j]] > threshold)
-            #     seg_result[f'{values[j]+200}'] = one_teeth_seg.tolist()                
+            if class_values[j] in {1,2,3,4}: # TODO: 牙龈， 合并的牙齿！
+                which_query = shot_query_indices[j]
+                (one_teeth_seg,)= np.where(feat[:, which_query] > threshold)
+                seg_result[f'{class_values[j]+200} + {j}'] = one_teeth_seg.tolist()                
                 
     return seg_result
 
@@ -140,6 +142,7 @@ pm_router = APIRouter(prefix="/segment")
 def oral_scan_seg(req:SegRequest) -> SegResponse:
     threshhold = req.threshhold
     s_o_i = req.s_o_i
+    print("s_o_i:", s_o_i)
     pred = seg(req.stl, s_o_i)
     result = read_result(pred, threshold=threshhold)
     res = SegResponse(seg_result=result)

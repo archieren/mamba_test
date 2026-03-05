@@ -437,19 +437,29 @@ class PMLoss(nn.Module):
         batch_size, num_queries , num_classes = pred_logits.shape
         criterion = nn.CrossEntropyLoss(weight=self.empty_weight)
         # 下面这段,要注意各种索引技巧！！！
-        queries_idx = self._get_predictions_permutation_indices(indices)
-        labels_idx = self._get_targets_permutation_indices(indices)
+        queries_idx = self._get_predictions_permutation_indices(indices) # (batch_indices, prediction_indices), shape为(t_0+t_1+...+t_(b-1), t_0+t_1+...+t_(b-1)).
+        # labels_idx = self._get_targets_permutation_indices(indices)
+        # print("indices:", indices)
         # print("queries_idx:", queries_idx)
         # print("labels_idx:", labels_idx)
         # for target, (_, indices_tgt) in zip(class_labels, indices):
         #     print("target:", target)
         #     print("indices_tgt:", indices_tgt)
         #     print("target[indices_tgt]",target[indices_tgt])
-        ###  获取匹配的目标类别,并调整格式！
+        ##  获取匹配的目标类别,并调整格式！
         class_labels = torch.cat([class_label[label_idx] for class_label, (_, label_idx) in zip(class_labels, indices)])  #  -> t_0+t_1+...+t_(b-1)
-        # TODO: target_classes为什么要搞成这个样子?
+        # target_classes为什么要搞成这个样子?
+        #   这种设计确保：
+        #   1. 所有 query 都有学习目标（匹配的学真实类别，未匹配的学 no-object）
+        #   2. 梯度可以传播到所有 query（不只是匹配的那几个）
+        #   3. 符合 DETR/Mask2Former 的标准做法，保持一致性！
         target_classes = torch.full((batch_size, num_queries), fill_value=0, dtype=class_labels.dtype, device=pred_logits.device)  # b q
-        target_classes[queries_idx] = class_labels     # 将target_classes,在idx索引出的位置上,填入目标值！！！即: 那个query，预测了那个类！
+        # Assigning values to indexed arrays: 
+        #   通过索引,将目标类别填入到target_classes中！ 
+        #   其中queries_idx是被选中的预测的索引，class_labels是对应的目标类别！ 
+        #   这样就完成了对所有query的目标类别的设置！匹配的学真实类别，未匹配的学 no-object（0）！     
+        #   将target_classes,在idx索引出的位置上,填入目标值！！！即: 那个query，预测了那个类！
+        target_classes[queries_idx] = class_labels
         # 计算交叉熵损失
         loss_ce = criterion(pred_logits.transpose(1, 2), target_classes)  # b l q, b q
         losses = {"loss_cross_entropy": loss_ce}
@@ -545,5 +555,4 @@ class PMLoss(nn.Module):
         }
 
         return losses
-
 

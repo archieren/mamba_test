@@ -34,7 +34,7 @@ class MaskPredictor(nn.Module):
         # TODO: 据说einsum对jit不友好,...
         # 注意predict_mask和predicted_mask的区别！
         predicted_mask = einsum(self.predict_mask(normed_query), memory, "b q d, b g d -> b q g ") / (self.embed_dim ** 0.5)  # b q d , b g d -> b q g
-        print(predicted_mask.mean().sigmoid(), predicted_mask.max().sigmoid(), predicted_mask.min().sigmoid())
+        #print(predicted_mask.mean().sigmoid(), predicted_mask.max().sigmoid(), predicted_mask.min().sigmoid())
         attention_mask = predicted_mask.sigmoid().squeeze(1).repeat(1, self.nhead, 1, 1)   # b q g -> b h q g
         attention_mask = rearrange(attention_mask, " b h q g -> (b h) q g")          # 注意： torch.nn.MultiheadAttention的要求！！！ 原文实现用的是flatten(0,1) 
         attention_mask = (attention_mask < 0.5).bool()
