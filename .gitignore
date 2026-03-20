@@ -4,3 +4,5 @@
 zby/
 old_tests/
 log/
+tests/probabilistic_laplacian/
+tests/simplified_meshes/
