@@ -454,7 +454,7 @@ class PMLoss(nn.Module):
         #   2. 梯度可以传播到所有 query（不只是匹配的那几个）
         #   3. 符合 DETR/Mask2Former 的标准做法，保持一致性！
         target_classes = torch.full((batch_size, num_queries), fill_value=0, dtype=class_labels.dtype, device=pred_logits.device)  # b q
-        # Assigning values to indexed arrays: 
+        # Assigning values to indexed arrays: (有点像稀疏矩阵的搞法)
         #   通过索引,将目标类别填入到target_classes中！ 
         #   其中queries_idx是被选中的预测的索引，class_labels是对应的目标类别！ 
         #   这样就完成了对所有query的目标类别的设置！匹配的学真实类别，未匹配的学 no-object（0）！     
@@ -531,7 +531,8 @@ class PMLoss(nn.Module):
         masks_queries_logits: torch.Tensor,                     # b q g
         class_queries_logits: torch.Tensor,                     # b q l
         labels              : torch.Tensor,                     # b g
-        shape_weight        : torch.Tensor=None                 # b g
+        shape_weight        : torch.Tensor=None,                # b g
+        is_mp_query         : torch.Tensor=None                 # b q
     ) -> Dict[str, torch.Tensor]:
         """
         Returns:
@@ -541,18 +542,99 @@ class PMLoss(nn.Module):
               masks.
             - **loss_dice** -- The loss computed using dice loss on the predicted on the predicted and ground truth
               masks.
+            - **mp_loss_mask**, **mp_loss_dice**, **mp_loss_cross_entropy** -- MP query losses (if enabled)
         """
         class_labels, mask_labels, shape_weights = tooth_lables(labels,shape_weight)
 
+        # Separate MP queries and original queries
+        if is_mp_query is not None:
+            # Split predictions into original and MP queries
+            is_original = ~is_mp_query
+
+            # Original query predictions (for Hungarian matching)
+            original_masks = masks_queries_logits[:, is_original[0], :]
+            original_classes = class_queries_logits[:, is_original[0], :]
+
+            # MP query predictions (for direct supervision)
+            mp_masks = masks_queries_logits[:, is_mp_query[0], :]
+            mp_classes = class_queries_logits[:, is_mp_query[0], :]
+        else:
+            original_masks = masks_queries_logits
+            original_classes = class_queries_logits
+            mp_masks = None
+            mp_classes = None
+
         # retrieve the matching between the outputs of the last layer and the labels
-        indices = self.matcher(masks_queries_logits, class_queries_logits, mask_labels, class_labels)
+        indices = self.matcher(original_masks, original_classes, mask_labels, class_labels)
         # compute the average number of target masks for normalization purposes
         num_masks = self.get_num_masks(class_labels, device=class_labels[0].device)
-        # get all the losses
+        # get all the losses for original queries
         losses: Dict[str, Tensor] = {
-            **self.loss_masks(masks_queries_logits, mask_labels, indices, num_masks, shape_weights),
-            **self.loss_labels(class_queries_logits, class_labels, indices),
+            **self.loss_masks(original_masks, mask_labels, indices, num_masks, shape_weights),
+            **self.loss_labels(original_classes, class_labels, indices),
         }
+
+        # Compute MP query losses (direct supervision, no matching)
+        if is_mp_query is not None and mp_masks is not None:
+            mp_losses = self._compute_mp_losses(
+                mp_masks, mp_classes, mask_labels, class_labels
+            )
+            losses.update(mp_losses)
+
+        return losses
+
+    def _compute_mp_losses(
+        self,
+        mp_masks: torch.Tensor,
+        mp_classes: torch.Tensor,
+        mask_labels: List[torch.Tensor],
+        class_labels: List[torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        """Compute direct supervision losses for MP queries (no Hungarian matching).
+
+        Args:
+            mp_masks: MP query mask predictions [b, mp_num, g]
+            mp_classes: MP query class predictions [b, mp_num, num_classes+1]
+            mask_labels: Ground truth masks
+            class_labels: Ground truth classes
+            shape_weights: Shape-aware weights
+
+        Returns:
+            Dictionary of MP losses
+        """
+        b, mp_num, _ = mp_masks.shape
+        device = mp_masks.device
+
+        # Collect corresponding GT labels for each batch element
+        # For simplicity, we'll use the first mp_num GT labels from each batch
+        all_target_masks = []
+        all_target_classes = []
+
+        for i in range(b):
+            num_gt = len(class_labels[i])
+            # Use modulo to cycle through GT if needed
+            indices = torch.arange(mp_num, device=device) % num_gt
+            all_target_masks.append(mask_labels[i][indices])
+            all_target_classes.append(class_labels[i][indices])
+
+        target_masks = torch.cat(all_target_masks, dim=0)  # (b*mp_num) g
+        target_classes = torch.cat(all_target_classes, dim=0)  # (b*mp_num)
+
+        # Flatten predictions
+        pred_masks = rearrange(mp_masks, "b n g -> (b n) g")
+        pred_classes = rearrange(mp_classes, "b n c -> (b n) c")
+
+        # Compute mask losses
+        num_mp_masks = b * mp_num
+        losses = {
+            "mp_loss_mask": sigmoid_cross_entropy_loss(pred_masks, target_masks, num_mp_masks),
+            "mp_loss_dice": dice_loss(pred_masks, target_masks, num_mp_masks),
+        }
+
+        # Compute class loss (cross entropy with target classes)
+        criterion = nn.CrossEntropyLoss(weight=self.empty_weight)
+        mp_loss_ce = criterion(pred_classes, target_classes)
+        losses["mp_loss_cross_entropy"] = mp_loss_ce
 
         return losses
 

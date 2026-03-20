@@ -4,7 +4,7 @@ import torch.nn as nn
 
 from torch import Tensor
 from einops import rearrange,einsum
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 from .mlp import MLP
 
 from pm.pointmamba.configuration_point_sis import  PointSISConfig
@@ -207,8 +207,19 @@ class MaskDecoder(nn.Module):
 
         self.layernorm = nn.LayerNorm(config.d_model)
 
+        # MP-Former components
+        self.use_mp_training = config.use_mp_training
+        self.num_original_queries = config.num_queries
+        self.num_mp_queries = config.mp_num_queries
+
+        if self.use_mp_training:
+            from .mp_noise import MPNoiseGenerator
+            from .mp_query_generator import MPQueryGenerator
+            self.noise_gen = MPNoiseGenerator(config)
+            self.query_gen = MPQueryGenerator(config)
+
     def forward(self,
-        # Q         
+        # Q
         query_embeddings: torch.Tensor,
         # 实质上是编码其的最后一层输出！
         mask_features: torch.Tensor,
@@ -216,10 +227,56 @@ class MaskDecoder(nn.Module):
         encoder_hidden_states: torch.Tensor,
         #
         query_position_embeddings: torch.Tensor = None,
-        ) -> Tuple[Tensor]:
-        query_hidden_states = query_embeddings  # b q d                            # 作为decode_layer的输入！ 直接级联
+        #
+        # MP-Former training: GT masks and classes
+        gt_masks: List[torch.Tensor] = None,
+        gt_classes: List[torch.Tensor] = None,
+        ) -> Tuple[Tensor, Tensor, Optional[Tensor]]:
+        """Forward pass of MaskDecoder.
 
-        query_hidden_states = self.layernorm(query_embeddings)        # 作为MaskPredictor的第一次输入！须先normalize！
+        Args:
+            query_embeddings: Original query embeddings [b, q, d]
+            mask_features: Feature tensor from encoder [b, g, d]
+            encoder_hidden_states: Multi-scale features from encoder
+            query_position_embeddings: Position embeddings for queries [b, q, d]
+            gt_masks: Ground truth masks for MP training (training only)
+            gt_classes: Ground truth classes for MP training (training only)
+
+        Returns:
+            predicated_mask: Predicted masks [b, total_queries, g]
+            predicated_classes: Predicted classes [b, total_queries, num_classes+1]
+            is_mp_query: Indicator tensor [b, total_queries] (None during inference)
+        """
+        query_hidden_states = query_embeddings  # b q d                            # 作为decode_layer的输入！ 直接级联
+        is_mp_query = None
+
+        # Generate MP queries during training
+        if self.use_mp_training and self.training and gt_masks is not None and gt_classes is not None:
+            device = query_embeddings.device
+            b, q, d = query_embeddings.shape
+
+            # Generate noisy masks and classes
+            noisy_masks, noisy_classes = self.noise_gen(
+                gt_masks, gt_classes, self.num_mp_queries, device
+            )
+
+            # Generate MP query embeddings
+            mp_query_emb = self.query_gen(noisy_masks, noisy_classes, mask_features)
+
+            # Create MP query position embeddings (use same as original queries, cycled)
+            num_actual_mp = mp_query_emb.shape[0] // b
+            mp_pos_emb = query_position_embeddings[:, :num_actual_mp, :].contiguous()
+            mp_pos_emb = rearrange(mp_pos_emb, "b n d -> (b n) d")
+
+            # Concatenate original and MP queries
+            query_hidden_states = torch.cat([query_embeddings, mp_query_emb.view(b, num_actual_mp, d)], dim=1)
+            query_position_embeddings = torch.cat([query_position_embeddings, mp_pos_emb.view(b, num_actual_mp, d)], dim=1)
+
+            # Create indicator for MP queries
+            is_mp_query = torch.zeros(b, q + num_actual_mp, dtype=torch.bool, device=device)
+            is_mp_query[:, q:] = True
+
+        query_hidden_states = self.layernorm(query_hidden_states)        # 作为MaskPredictor的第一次输入！须先normalize！
         predicated_classes, predicated_mask, attention_mask = self.mask_predictor(query_hidden_states, mask_features)
         for idx, decoder_layer in enumerate(self.layers):
             level_index = idx % self.num_feature_levels
@@ -235,6 +292,6 @@ class MaskDecoder(nn.Module):
                 attention_mask = attention_mask,
             )
             predicated_classes, predicated_mask, attention_mask = self.mask_predictor(query_hidden_states,mask_features)
-            
 
-        return predicated_mask, predicated_classes
+
+        return predicated_mask, predicated_classes, is_mp_query

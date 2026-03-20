@@ -31,8 +31,8 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 #参数：TODO
-epoches = 512
-batch_size = 1
+epoches = 8096
+batch_size = 2
 
 def time_it(start_time):
     stop_time = time.time()
@@ -121,6 +121,13 @@ def train():
     #train_loader = dataloader()
     test_loader = dataloader(split="test")
     m_config = make_default_config()
+
+    # Enable MP-Former training
+    m_config.use_mp_training = True
+    m_config.mp_num_queries = 6
+    m_config.mp_noise_ratio = 0.2
+    m_config.mp_label_noise_ratio = 0.1
+
     model = MODE_CLS(m_config)
     if checkpoints_file.exists():
         model.load_state_dict(torch.load(checkpoints_file))
@@ -129,7 +136,7 @@ def train():
     model= model.to(device)
     
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4)
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[1024,], gamma=0.1)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[32384,], gamma=0.1)
     
     for epoch in range(epoches):
         model= model.train()

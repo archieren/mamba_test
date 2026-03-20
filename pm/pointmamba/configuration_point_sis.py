@@ -163,7 +163,7 @@ class PointSISConfig():
         # About SFC
         #Spatial Filling Curve!
         #{"z", "z-trans", "z-reverse","hilbert", "hilbert-trans", "hilbert-reverse"}
-        order              = ["hilbert", "hilbert-reverse" ]  # "z", "z-reverse"
+        order              = ["hilbert",  "z-reverse"]  # "z", "hilbert-reverse"
         shuffle_orders:bool=False
         mamba_config = asdict(Mamba1Config())
         d_model:      int = 96       # feature_dim pos_dim d_model 是一样的!, 未将d_model放到mamba_config里！
@@ -198,14 +198,20 @@ class PointSISConfig():
         num_feature_levels:  int = len(enc_depths) - 1       # 
         num_decode_layers:   int = int(num_feature_levels*2)
         num_labels:          int =  TEETH.all_classes
-        num_queries:         int = 24             
+        num_queries:         int = 36             
         dropout:             float = 0.1
         ## About loss
         class_weight:        float = 5.0
         mask_weight:         float = 5.0
         dice_weight:         float = 5.0
-        no_object_weight:    float = 0.2     # 0.1 是原始值！            
+        no_object_weight:    float = 0.2     # 0.1 是原始值！
         # Prompting
+
+        # MP-Former training parameters
+        use_mp_training: bool = False           # Enable/disable MP training
+        mp_num_queries: int = 6                # Number of MP queries per batch
+        mp_noise_ratio: float = 0.2            # Point dropout noise ratio (0.2 = 20%)
+        mp_label_noise_ratio: float = 0.1      # Class label noise ratio
 
 def make_default_config():
     config = PointSISConfig()

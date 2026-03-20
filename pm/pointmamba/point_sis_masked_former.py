@@ -13,7 +13,7 @@ from mamba_ssm.modules.block import Block
 from mamba_ssm.modules.mamba2 import Mamba2 as Mamba
 
 from pm.pointmamba.mlp import MLP
-from pm.pointmamba.configuration_point_sis import Mamba1Config, PointSISConfig
+from pm.pointmamba.configuration_point_sis import Mamba1Config, PointSISConfig, tooth_lables
 from pm.pointmamba.losses import PMLoss
 from pm.pointmamba.pointmask import MaskDecoder, MaskedAttentionDecoderLayer, MaskPredictor
 
@@ -264,26 +264,26 @@ class Stage(nn.Module):
         self.mixer_layers = MixerLayers(d_model=feat_dim, depth= depth, mamba_config=mamba_config)                          
 
     def scan(self, s_pc:PointCloud):
-        s_order = s_pc.serialized_order   # o (b g)
-        s_inverse = s_pc.serialized_inverse  # o (b g)
-        seq_idx = s_pc.batch.unsqueeze(0).int()  # (b g) -> 1 (b g)
-        o_s = s_order.shape[0]
+        s_order = s_pc.serialized_order   # o (Σ g_i)
+        s_inverse = s_pc.serialized_inverse  # o (Σ g_i)
+        seq_idx = s_pc.batch.unsqueeze(0).int()  # (Σ g_i) -> 1 (Σ g_i)
+        o_s = s_order.shape[0]  # 有多少种扫描次序!
         # s_order, s_inverse 均为 order_size batch_size*num_group
-        hidden_state  = s_pc.feat   # (b g) d 
+        hidden_state  = s_pc.feat   # (Σ g_i) d 
         #将各排序拼接,走Mamba流程！
         
-        output_gathered = []
-        #output_gathered.append(hidden_state)
-        for i in range(o_s):                     # 对每个排序， 走一趟mixer_layers
-            seq_input   = torch_scatter.scatter(hidden_state,index=s_order[i], dim=0)  # 排序:    (b g) d, (b g) => (b g) d 
-            seq_input = seq_input.unsqueeze(0)         # "(b g) d -> 1 (b g) d"
-            seq_output  = self.mixer_layers(seq_input, seq_idx = seq_idx)
-            seq_output = seq_output.squeeze(0)     #  "1 (b g) d -> (b g) d"
-            seq_output  = torch_scatter.scatter(seq_output,index=s_inverse[i], dim=0)# 逆排序:   (b g) d, (b g) => (b g) d
-            output_gathered.append(seq_output) # 
+        # output_gathered = []
+        for i in range(o_s):                                                            # 对每个排序， 走一趟mixer_layers
+            seq_input = torch_scatter.scatter(hidden_state,index=s_order[i], dim=0)     # 排序:    (Σ g_i) d, (Σ g_i) => (Σ g_i) d 
+            seq_input = seq_input.unsqueeze(0)                                          # "(Σ g_i) d -> 1 (Σ g_i) d"
+            seq_output= self.mixer_layers(seq_input, seq_idx = seq_idx)
+            seq_output= seq_output.squeeze(0)                                           #  "1 (Σ g_i) d -> (Σ g_i) d"
+            seq_output= torch_scatter.scatter(seq_output,index=s_inverse[i], dim=0)     # 逆排序:   (Σ g_i) d, (Σ g_i) => (Σ g_i) d
+            # output_gathered.append(seq_output)      # 
+            hidden_state = hidden_state + seq_output  # 每个排序的输出都要累加起来！  (Σ g_i) d + (Σ g_i) d => (Σ g_i) d ？ 残差加交叉？
         
-        hidden_state = torch.stack(output_gathered, dim=-1) # [(b g) d, ...] => [(b g) d o_s]
-        hidden_state = torch.sum(hidden_state, dim=-1) / o_s  # TODO: 这里相当于平均？ +1 是因为多了个残差？
+        # hidden_state = torch.stack(output_gathered, dim=-1) # [(Σ g_i) d, ...] => [(Σ g_i) d o_s]
+        # hidden_state = torch.sum(hidden_state, dim=-1) / o_s  # TODO: 这里相当于平均？ +1 是因为多了个残差？
 
         s_pc.feat = hidden_state 
         s_pc.sparse_conv_feat = s_pc.sparse_conv_feat.replace_feature(s_pc.feat)
@@ -506,10 +506,10 @@ class PointSIS_Seg(nn.Module):
     def forward(self, s_pc: PointCloud):
         """_summary_
         Args:
-            s_pc (PointCloud): The Grouped PointCloud, with "coord,feat,offset,grid_size,s_o_i" as inputs. 
+            s_pc (PointCloud): The Grouped PointCloud, with "coord,feat,offset,grid_size,s_o_i" as inputs.
                                 "labels,shape_weight" are optional, depending on whether it's training or inference!
         Returns:
-            PointCloud: s_pc with updated "feat" as predicted mask, and "pred_probs" as predicted class probabilities. 
+            PointCloud: s_pc with updated "feat" as predicted mask, and "pred_probs" as predicted class probabilities.
                         If in training, also with "loss".
         """
         # s_pc: "coord,feat,offset,grid_size,s_o_i"可用，"labels,shape_weight"看情况!
@@ -522,13 +522,28 @@ class PointSIS_Seg(nn.Module):
         # config.num_feature_levels控制！ 其实就是主干网的那几层输出!
         encoder_hidden_states =  s_pc.feat[0:-1]
 
-        pred_mask, pred_probs = self.mask_decoder(                                   #       -> b q g , b q d
+        # Prepare GT masks and classes for MP training
+        gt_masks = None
+        gt_classes = None
+        if "labels" in s_pc.keys() and self.mask_decoder.use_mp_training:
+            labels = rearrange(s_pc.labels, "(b g) -> b g", b=b_s)
+            shape_weight = (
+                rearrange(s_pc.shape_weight, "(b g) -> b g", b=b_s)
+                if s_pc.shape_weight is not None
+                else None
+            )
+            # Convert labels to mask and class format
+            gt_classes, gt_masks, _ = tooth_lables(labels, shape_weight)
+
+        pred_mask, pred_probs, is_mp_query = self.mask_decoder(                                   #       -> b q g , b q d
                             query_embeddings = query,
                             query_position_embeddings = query_pos,
                             mask_features = mask_features,             #       编码主干网的最后一层输出！
-                            encoder_hidden_states= encoder_hidden_states    #       编码主干网的下面几层的输出！
+                            encoder_hidden_states= encoder_hidden_states,   #       编码主干网的下面几层的输出！
+                            gt_masks = gt_masks,
+                            gt_classes = gt_classes
                         )
-                
+
         # TODO: pred_probs和 pred_mask 都无须activation！loss里面有！
         if "labels" in s_pc.keys():  # 如果有标签，就计算loss！！！
             labels = rearrange(s_pc.labels, "(b g) -> b g", b=b_s)
@@ -537,7 +552,7 @@ class PointSIS_Seg(nn.Module):
                 if s_pc.shape_weight is not None
                 else None
             )
-            m_i = self.loss(pred_mask, pred_probs, labels, shape_weight)  #
+            m_i = self.loss(pred_mask, pred_probs, labels, shape_weight, is_mp_query)  #
             s_pc.loss = m_i
         pred_mask = rearrange(pred_mask, "b q g -> b g q")
         pred_mask = rearrange(pred_mask, "b g q -> (b g) q")
