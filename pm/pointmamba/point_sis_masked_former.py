@@ -152,7 +152,7 @@ class GridPooling(nn.Module):     #下
     def forward(self, point: PointCloud):
         grid_coord = point.grid_coord       
         grid_coord = torch.div(grid_coord, self.stride, rounding_mode="trunc")
-        #{Start (TODO: 要理解这儿干了什么？)
+        # {Start (TODO: 要理解这儿干了什么？)
         # print(f"start- {grid_coord.shape}")
         # if "pooling_parent" in point.keys():
         #     print("has pooling_parent")
@@ -174,14 +174,14 @@ class GridPooling(nn.Module):     #下
         # head_indices of each cluster, for reduce attr e.g. code, batch
         head_indices = indices[idx_ptr[:-1]]
         point_dict = Dict(
-            # feat=torch_scatter.segment_csr(  # 特征有个reduce！
-            #     self.proj(point.feat)[indices], idx_ptr, reduce=self.reduce
-            # ),
-            # coord=torch_scatter.segment_csr( # 坐标有个reduce！
-            #     point.coord[indices], idx_ptr, reduce="mean"
-            # ),
-            feat = self.proj(point.feat[head_indices]),
-            coord = point.coord[head_indices],  # 直接用head point的坐标！
+            feat=torch_scatter.segment_csr(  # 特征有个reduce！
+                self.proj(point.feat)[indices], idx_ptr, reduce=self.reduce
+            ),
+            coord=torch_scatter.segment_csr( # 坐标有个reduce！
+                point.coord[indices], idx_ptr, reduce="mean"
+            ),
+            # feat = self.proj(point.feat[head_indices]),
+            # coord = point.coord[head_indices],  # 直接用head point的坐标！
             grid_coord=grid_coord, # TODO: 这里牵涉到某个决策的问题！
             batch=point.batch[head_indices],
             order = point.order           # TODO: 这个地方有点隐蔽,必须穿进来的,必须有这个field!
@@ -272,19 +272,17 @@ class Stage(nn.Module):
         hidden_state  = s_pc.feat   # (Σ g_i) d 
         #将各排序拼接,走Mamba流程！
         
-        # output_gathered = []
         for i in range(o_s):                                                            # 对每个排序， 走一趟mixer_layers
             seq_input = torch_scatter.scatter(hidden_state,index=s_order[i], dim=0)     # 排序:    (Σ g_i) d, (Σ g_i) => (Σ g_i) d 
             seq_input = seq_input.unsqueeze(0)                                          # "(Σ g_i) d -> 1 (Σ g_i) d"
             seq_output= self.mixer_layers(seq_input, seq_idx = seq_idx)
             seq_output= seq_output.squeeze(0)                                           #  "1 (Σ g_i) d -> (Σ g_i) d"
             seq_output= torch_scatter.scatter(seq_output,index=s_inverse[i], dim=0)     # 逆排序:   (Σ g_i) d, (Σ g_i) => (Σ g_i) d
-            # output_gathered.append(seq_output)      # 
+            # TODO: 这个地方是值得深刻思考的地方！对各排序序列，如何做相干性处理，是个关键.
+            # 这里采取了一个折中的方法，利用残差形式，来作相干性处理！
+            # TODO: 还有什么好办法吗？
             hidden_state = hidden_state + seq_output  # 每个排序的输出都要累加起来！  (Σ g_i) d + (Σ g_i) d => (Σ g_i) d ？ 残差加交叉？
         
-        # hidden_state = torch.stack(output_gathered, dim=-1) # [(Σ g_i) d, ...] => [(Σ g_i) d o_s]
-        # hidden_state = torch.sum(hidden_state, dim=-1) / o_s  # TODO: 这里相当于平均？ +1 是因为多了个残差？
-
         s_pc.feat = hidden_state 
         s_pc.sparse_conv_feat = s_pc.sparse_conv_feat.replace_feature(s_pc.feat)
         return s_pc                       
@@ -374,7 +372,7 @@ class PointSIS_Feature_Extractor(nn.Module):
         assert s_pc.s_o_i is not None, "s_pc must have s_o_i field!"
         s_o_i = s_pc.s_o_i.unsqueeze(-1).repeat(1, self.num_group)
         s_o_i = rearrange(s_o_i, "b g -> (b g) 1")
-        
+        # print(s_pc.coord.shape, s_pc.feat.shape, s_o_i.shape)
         s_pc.feat = torch.cat([s_pc.coord, s_pc.feat, s_o_i], dim=-1)  # BG 7 #此处融入坐标！
         s_pc.order = self.order
         s_pc.serialization(order=self.order, shuffle_orders=self.shuffle_orders)

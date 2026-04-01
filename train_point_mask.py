@@ -31,8 +31,8 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 #参数：TODO
-epoches = 8096
-batch_size = 2
+epoches = 200
+batch_size = 1
 
 def time_it(start_time):
     stop_time = time.time()
@@ -118,7 +118,7 @@ def train():
     checkpoints_dir = exp_dir.joinpath('checkpoints/')
     checkpoints_dir.mkdir(exist_ok=True)
     checkpoints_file = checkpoints_dir.joinpath('model_weights.pth')
-    #train_loader = dataloader()
+    train_loader = dataloader()
     test_loader = dataloader(split="test")
     m_config = make_default_config()
 
@@ -141,7 +141,7 @@ def train():
     for epoch in range(epoches):
         model= model.train()
         loss_batch = []
-        with tqdm(test_loader) as t:  #
+        with tqdm(train_loader) as t:  #
             for i, data in enumerate(t):
                 optimizer.zero_grad()
                 pc=model(PointCloud(data))

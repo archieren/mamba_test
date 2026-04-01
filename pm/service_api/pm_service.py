@@ -110,23 +110,23 @@ def read_result(pc:PointCloud, threshold:float):
         print(len(class_values), ":", class_values)
         seg_result = {}
         for j in range(len(shot_query_indices)):
-            # if class_values[j] < 33:
-            #     which_class = class_values[j]
-            #     t_num = TEETH.TEETH_cls_num[which_class]
+            if class_values[j] < 33:
+                which_class = class_values[j]
+                t_num = TEETH.TEETH_cls_num[which_class]
 
-            #     which_query = shot_query_indices[j]
-            #     (one_teeth_seg,)= np.where(feat[:, which_query] > threshold)
-            #     seg_result[f'{t_num}'] = one_teeth_seg.tolist()
-
+                which_query = shot_query_indices[j]
+                (one_teeth_seg,)= np.where(feat[:, which_query] > threshold)
+                seg_result[f'{t_num}'] = one_teeth_seg.tolist()
+                print(f"Segmented tooth {t_num} with query {which_query}", "and class value", class_values[j], "and number of points in segment", len(one_teeth_seg))
             # if values[j] < 2 :
             #     t_num = values[j]
             #     (one_teeth_seg,)= np.where(feat[:, indices[j]] > threshold)
             #     seg_result[f'{t_num}+{j}'] = one_teeth_seg.tolist()
 
-            if class_values[j] in {1,2,3,4}: # TODO: 牙龈， 合并的牙齿！
-                which_query = shot_query_indices[j]
-                (one_teeth_seg,)= np.where(feat[:, which_query] > threshold)
-                seg_result[f'{class_values[j]+200} + {j}'] = one_teeth_seg.tolist()                
+            # if class_values[j] in {1,2,3,4}: # TODO: 牙龈， 合并的牙齿！
+            #     which_query = shot_query_indices[j]
+            #     (one_teeth_seg,)= np.where(feat[:, which_query] > threshold)
+            #     seg_result[f'{class_values[j]+200} + {j}'] = one_teeth_seg.tolist()                
                 
     return seg_result
 
