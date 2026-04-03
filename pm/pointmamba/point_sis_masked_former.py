@@ -272,6 +272,7 @@ class Stage(nn.Module):
         hidden_state  = s_pc.feat   # (Σ g_i) d 
         #将各排序拼接,走Mamba流程！
         
+        scale = 1.0 / (o_s ** 0.5)  # 这个scale是有必要的！因为要累加o_s次！
         for i in range(o_s):                                                            # 对每个排序， 走一趟mixer_layers
             seq_input = torch_scatter.scatter(hidden_state,index=s_order[i], dim=0)     # 排序:    (Σ g_i) d, (Σ g_i) => (Σ g_i) d 
             seq_input = seq_input.unsqueeze(0)                                          # "(Σ g_i) d -> 1 (Σ g_i) d"
@@ -281,7 +282,7 @@ class Stage(nn.Module):
             # TODO: 这个地方是值得深刻思考的地方！对各排序序列，如何做相干性处理，是个关键.
             # 这里采取了一个折中的方法，利用残差形式，来作相干性处理！
             # TODO: 还有什么好办法吗？
-            hidden_state = hidden_state + seq_output  # 每个排序的输出都要累加起来！  (Σ g_i) d + (Σ g_i) d => (Σ g_i) d ？ 残差加交叉？
+            hidden_state = hidden_state + seq_output*scale  # 每个排序的输出都要累加起来！  (Σ g_i) d + (Σ g_i) d => (Σ g_i) d ？ 残差加交叉？
         
         s_pc.feat = hidden_state 
         s_pc.sparse_conv_feat = s_pc.sparse_conv_feat.replace_feature(s_pc.feat)

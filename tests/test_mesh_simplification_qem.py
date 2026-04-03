@@ -402,23 +402,28 @@ def segment_by_wks():
     start_time = time.time()
     L, M_values = build_cotan_laplacian(simplified)
     time_it(start_time, label="构建拉普拉斯矩阵")
+    # {- 1
     start_time = time.time()
     eigenvalues, eigenvectors = compute_eigenpairs(L, M_values, k=64)
     time_it(start_time, label="计算特征值和特征向量")
     start_time = time.time()
     wks = compute_wks(eigenvalues, eigenvectors, num_scales=128, sigma=0.06)
     time_it(start_time, label="计算 WKS")
+    # 1 -}
+    # {- 2
     # start_time = time.time()
-    # wks = compute_fixed_cheb_features(L, K=2)
+    # wks = compute_fixed_cheb_features(L, K=16)
     # time_it(start_time, label="计算切比雪夫特征")
+    # 2 -}
     print("WKS 特征维度:", wks.shape)
     input("按 Enter 键继续...")
-    visualize_wks_similarity(
-        vertices=np.asarray(simplified.vertices),
-        faces=np.asarray(simplified.triangles),
-        wks=wks,
-        query_v_idx=4096  # 选择一个顶点作为参考点
-    )
+    print(wks[:5, :5])  # 打印前5个顶点的 WKS 特征示例
+    # visualize_wks_similarity(
+    #     vertices=np.asarray(simplified.vertices),
+    #     faces=np.asarray(simplified.triangles),
+    #     wks=wks,
+    #     query_v_idx=8192  # 选择一个顶点作为参考点
+    # )
     # visualize_wks_pca(
     #     vertices=np.asarray(simplified.vertices),
     #     faces=np.asarray(simplified.triangles),

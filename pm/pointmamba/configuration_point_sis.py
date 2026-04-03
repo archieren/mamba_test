@@ -205,6 +205,10 @@ class PointSISConfig():
         mask_weight:         float = 5.0
         dice_weight:         float = 5.0
         no_object_weight:    float = 0.2     # 0.1 是原始值！
+        geo_weight:          float = 2.0
+        mp_class_weight:     float = 2.0
+        mp_mask_weight:      float = 2.0
+        mp_dice_weight:      float = 2.0
         # Prompting
 
         # MP-Former training parameters

@@ -31,7 +31,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 #参数：TODO
-epoches = 200
+epoches = 90
 batch_size = 1
 
 def time_it(start_time):

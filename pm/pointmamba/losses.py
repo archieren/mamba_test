@@ -403,6 +403,10 @@ class PMLoss(nn.Module):
             "loss_cross_entropy": config.class_weight,
             "loss_mask": config.mask_weight,
             "loss_dice": config.dice_weight,
+            "loss_geo": config.geo_weight,                
+            "mp_loss_mask": config.mp_mask_weight,        
+            "mp_loss_dice": config.mp_dice_weight,        
+            "mp_loss_cross_entropy": config.mp_class_weight,
         }
 
         # Weight to apply to the null class
@@ -462,7 +466,7 @@ class PMLoss(nn.Module):
         target_classes[queries_idx] = class_labels
         # 计算交叉熵损失
         loss_ce = criterion(pred_logits.transpose(1, 2), target_classes)  # b l q, b q
-        losses = {"loss_cross_entropy": loss_ce}
+        losses = {"loss_cross_entropy": loss_ce * self.weight_dict["loss_cross_entropy"]}
 
         del pred_logits
         del target_classes
@@ -496,9 +500,9 @@ class PMLoss(nn.Module):
         target_shape_weight = torch.cat([target[target_indices] for target, (_, target_indices) in zip(shape_weight, indices)])
             
         losses = {
-            "loss_mask" : sigmoid_cross_entropy_loss(pred_masks, target_masks, num_masks),
-            "loss_dice" : dice_loss(pred_masks, target_masks, num_masks),
-            "loss_geo": geo_loss(pred_masks,target_masks,num_masks, target_shape_weight),
+            "loss_mask" : sigmoid_cross_entropy_loss(pred_masks, target_masks, num_masks) * self.weight_dict["loss_mask"],
+            "loss_dice" : dice_loss(pred_masks, target_masks, num_masks) * self.weight_dict["loss_dice"],
+            "loss_geo": geo_loss(pred_masks,target_masks,num_masks, target_shape_weight) * self.weight_dict["loss_geo"],
         }
         del pred_masks
         del target_masks
@@ -627,14 +631,14 @@ class PMLoss(nn.Module):
         # Compute mask losses
         num_mp_masks = b * mp_num
         losses = {
-            "mp_loss_mask": sigmoid_cross_entropy_loss(pred_masks, target_masks, num_mp_masks),
-            "mp_loss_dice": dice_loss(pred_masks, target_masks, num_mp_masks),
+            "mp_loss_mask": sigmoid_cross_entropy_loss(pred_masks, target_masks, num_mp_masks) * self.weight_dict["mp_loss_mask"],
+            "mp_loss_dice": dice_loss(pred_masks, target_masks, num_mp_masks) * self.weight_dict["mp_loss_dice"],
         }
 
         # Compute class loss (cross entropy with target classes)
         criterion = nn.CrossEntropyLoss(weight=self.empty_weight)
         mp_loss_ce = criterion(pred_classes, target_classes)
-        losses["mp_loss_cross_entropy"] = mp_loss_ce
+        losses["mp_loss_cross_entropy"] = mp_loss_ce * self.weight_dict["mp_loss_cross_entropy"]
 
         return losses
 
