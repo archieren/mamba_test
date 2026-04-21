@@ -403,7 +403,8 @@ class PMLoss(nn.Module):
             "loss_cross_entropy": config.class_weight,
             "loss_mask": config.mask_weight,
             "loss_dice": config.dice_weight,
-            "loss_geo": config.geo_weight,                
+            "loss_geo": config.geo_weight,
+            "loss_diversity": config.diversity_weight,               
             "mp_loss_mask": config.mp_mask_weight,        
             "mp_loss_dice": config.mp_dice_weight,        
             "mp_loss_cross_entropy": config.mp_class_weight,
@@ -536,7 +537,8 @@ class PMLoss(nn.Module):
         class_queries_logits: torch.Tensor,                     # b q l
         labels              : torch.Tensor,                     # b g
         shape_weight        : torch.Tensor=None,                # b g
-        is_mp_query         : torch.Tensor=None                 # b q
+        is_mp_query         : torch.Tensor=None,                # b q
+        query_embeddings    : torch.Tensor=None                 # b q d
     ) -> Dict[str, torch.Tensor]:
         """
         Returns:
@@ -584,6 +586,14 @@ class PMLoss(nn.Module):
                 mp_masks, mp_classes, mask_labels, class_labels
             )
             losses.update(mp_losses)
+
+        if query_embeddings is not None and is_mp_query is not None:
+            # 传进来的就是原始的query！ 所以没必要过滤掉MP query了！ 直接用就行了！
+            # is_original = ~is_mp_query
+            # original_queries = query_embeddings[:, is_original[0], :]
+            original_queries = query_embeddings
+            div_loss = self._compute_query_diversity_loss(original_queries)
+            losses["loss_diversity"] = div_loss * self.weight_dict["loss_diversity"]
 
         return losses
 
@@ -641,4 +651,16 @@ class PMLoss(nn.Module):
         losses["mp_loss_cross_entropy"] = mp_loss_ce * self.weight_dict["mp_loss_cross_entropy"]
 
         return losses
+
+    def _compute_query_diversity_loss(self, query_emb: torch.Tensor) -> torch.Tensor:
+        """
+        鼓励不同 query 关注不同特征，防止 query collapse。
+        query_emb: [b, q, d]
+        使用 sim^2.mean() 作为 loss：sim→0 时 loss 最小（正交/多样），sim→±1 时 loss 最大（惩罚坍缩）。
+        """
+        q_norm = F.normalize(query_emb, p=2, dim=-1)
+        sim = torch.bmm(q_norm, q_norm.transpose(1, 2))  # [b, q, q], ∈ [-1, 1]
+        mask = torch.eye(q_norm.shape[1], device=q_norm.device).bool()
+        sim = sim.masked_fill(mask, 0)
+        return sim.pow(2).mean()
 
